@@ -14,6 +14,7 @@ class UniversalMettaScraper:
         self.site_name = site_name
         self.delay = delay
         self.visited = set()
+        self.page_cache: Dict[str, str] = {}
         self.pages: List[Dict[str, Any]] = []
 
         # Site configurations
@@ -65,6 +66,26 @@ class UniversalMettaScraper:
                 "hub_url": "/",
                 "link_selectors": ['a[href^="/"]'],
             },
+            "trueagi-io.github.io/hyperon-experimental": {
+                "base_url": "https://trueagi-io.github.io/hyperon-experimental/",
+                "needs_js": False,
+                "link_patterns": ["/hyperon-experimental/"],
+                "file_extensions": ["", ".html"],
+                "hub_url": "/hyperon-experimental/",
+                "crawl_all": True,
+                "link_selectors": [
+                    'a[href^="/hyperon-experimental/"]',
+                    'a[href^="https://trueagi-io.github.io/hyperon-experimental/"]',
+                    'a[href^="./"]',
+                    'a[href^="metta/"]',
+                    'a[href^="generated/"]',
+                    'a[href^="reference/"]',
+                    'a[href^="modules"]',
+                    'a[href^="das"]',
+                    'a[href^="rust/"]',
+                    'a[href^="c/"]',
+                ],
+            },
         }
 
         if site_name not in self.sites_config:
@@ -77,9 +98,12 @@ class UniversalMettaScraper:
 
     async def fetch_page(self, url: str) -> str:
         """Fetch HTML content, using Playwright only when needed."""
+        url = self._normalize_url(url)
+        if url in self.page_cache:
+            return self.page_cache[url]
         if url in self.visited:
             print(f"Skipping already visited: {url}")
-            return ""
+            return self.page_cache.get(url, "")
 
         try:
             if self.config["needs_js"]:
@@ -96,6 +120,7 @@ class UniversalMettaScraper:
                 content = response.text
 
             self.visited.add(url)
+            self.page_cache[url] = content
             import asyncio
 
             await asyncio.sleep(self.delay)
@@ -143,6 +168,38 @@ class UniversalMettaScraper:
         print(f"Discovered {len(urls)} URLs for {self.site_name}")
         return urls
 
+    async def discover_all_urls(self, hub_url: str) -> List[str]:
+        """Crawl all internal URLs starting from hub_url."""
+        start_url = self._normalize_url(urljoin(self.base_url, hub_url))
+        queue = [start_url]
+        discovered = []
+        seen = set()
+
+        while queue:
+            current = self._normalize_url(queue.pop(0))
+            if current in seen:
+                continue
+            seen.add(current)
+
+            html = await self.fetch_page(current)
+            if not html:
+                continue
+
+            if self._should_scrape_url(current):
+                discovered.append(current)
+
+            soup = BeautifulSoup(html, "lxml")
+            for link in soup.select("a[href]"):
+                href = link.get("href")
+                if not href:
+                    continue
+                full_url = self._normalize_url(urljoin(self.base_url, href))
+                if self._should_scrape_url(full_url) and full_url not in seen:
+                    queue.append(full_url)
+
+        print(f"Discovered {len(discovered)} URLs for {self.site_name}")
+        return discovered
+
     def _is_valid_url(self, path: str) -> bool:
         """Check if URL path matches site patterns."""
         for pattern in self.config["link_patterns"]:
@@ -152,16 +209,13 @@ class UniversalMettaScraper:
 
     def _should_scrape_url(self, url: str) -> bool:
         """Determine if URL should be scraped based on site rules."""
+        url = self._normalize_url(url)
         parsed = urlparse(url)
         path = parsed.path
 
         # Skip external links
         if parsed.netloc != urlparse(self.base_url).netloc:
             return False
-
-        # Skip fragments and query parameters
-        if "#" in url or "?" in url:
-            url = url.split("#")[0].split("?")[0]
 
         # Check file extensions
         if self.config["file_extensions"]:
@@ -184,8 +238,28 @@ class UniversalMettaScraper:
             return not any(
                 path.startswith(skip) for skip in skip_paths
             ) and path.endswith(".html")
+        elif self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            if not path.startswith("/hyperon-experimental/"):
+                return False
+            skip_paths = [
+                "/hyperon-experimental/assets/",
+                "/hyperon-experimental/stylesheets/",
+                "/hyperon-experimental/javascripts/",
+                "/hyperon-experimental/search/",
+                "/hyperon-experimental/sitemap.xml",
+            ]
+            return not any(path.startswith(skip) for skip in skip_paths)
 
         return True
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalize URL by removing fragments/query and trimming trailing slash."""
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        if path.endswith("/") and path != "/":
+            path = path[:-1]
+        return parsed._replace(path=path, query="", fragment="").geturl()
 
     def classify_page(self, url: str, content: str) -> str:
         """Classify the page based on URL and content."""
@@ -223,6 +297,25 @@ class UniversalMettaScraper:
                 return "Contribution"
             else:
                 return "MeTTa Learning Content"
+
+        elif self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            if "/generated/" in path:
+                return "Generated Modules"
+            if "/reference/" in path:
+                return "Reference"
+            if "/rust/" in path:
+                return "Rust API Reference"
+            if "/c/" in path:
+                return "C API Reference"
+            if "/metta/" in path or "/minimal-metta/" in path:
+                return "MeTTa Specification"
+            if "/modules" in path:
+                return "Modules"
+            if "/das" in path:
+                return "DAS"
+            if "/development" in path or "/contributing" in path:
+                return "Development"
+            return "Hyperon Documentation"
 
         elif self.site_name == "metta-lang.dev":
             if "stdlib_overview" in path:
@@ -407,7 +500,10 @@ class UniversalMettaScraper:
         if hub_url is None:
             hub_url = self.config["hub_url"]
 
-        tutorial_urls = await self.extract_tutorial_urls(hub_url)
+        if self.config.get("crawl_all"):
+            tutorial_urls = await self.discover_all_urls(hub_url)
+        else:
+            tutorial_urls = await self.extract_tutorial_urls(hub_url)
 
         hub_html = await self.fetch_page(urljoin(self.base_url, hub_url))
         if hub_html:
