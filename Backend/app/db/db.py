@@ -53,8 +53,8 @@ async def insert_chunks(
         except Exception as e:
             logger.error("Validation error: %s", e)
 
-        if not valid_chunks:
-            return []
+    if not valid_chunks:
+        return []
 
     # Insert many
     try:
