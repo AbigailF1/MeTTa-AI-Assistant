@@ -15,6 +15,8 @@ from app.model.chat_session import (
     ChatSessionWithMessages
 )
 
+from app.core.logging import logger
+
 router = APIRouter(
     prefix="/api/chat/sessions",
     tags=["chat_sessions"],
@@ -40,15 +42,19 @@ async def list_sessions(
         )
         return result
     except Exception as e:
+        logger.error(f"Error retrieving sessions: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving sessions: {str(e)}",
+            detail="Error retrieving sessions.",
         )
 
 
 @router.get("/{session_id}", response_model=ChatSessionWithMessages)
 async def get_session(
     session_id: str,
+    include_messages: bool = Query(
+        True, description="Whether to include messages in the response"
+    ),
     current_user: dict = Depends(get_current_user),
     mongo_db: Database = Depends(get_mongo_db),
 ):
@@ -64,9 +70,13 @@ async def get_session(
 
     if session.get("userId") != current_user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
-        
-    messages = await get_messages_for_session(session_id, mongo_db=mongo_db)
-    session["messages"] = messages
+
+    if include_messages:
+        messages = await get_messages_for_session(session_id, mongo_db=mongo_db)
+        session["messages"] = messages
+    else:
+        session["messages"] = []
+
     return session
 
 
@@ -141,7 +151,8 @@ async def delete_session(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error deleting session: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error deleting session: {str(e)}",
+            detail="Error deleting session.",
         )
