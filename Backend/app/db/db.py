@@ -18,7 +18,7 @@ async def insert_chunk(chunk_data: dict, mongo_db: Database = None) -> str | Non
     Insert a single chunk.
     Returns inserted ID.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     try: 
         chunk = ChunkSchema(**chunk_data)
     except Exception as e:
@@ -39,7 +39,7 @@ async def insert_chunks(
     Insert multiple chunks with duplicate checking.
     Returns a list of inserted chunkIds.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     valid_chunks = []
 
     # Validate and check duplicates
@@ -75,7 +75,7 @@ async def get_chunk_by_id(chunk_id: str, mongo_db: Database =None) -> dict | Non
     """
     Retrieve a chunk by its ID.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     return await collection.find_one({"chunkId": chunk_id}, {"_id": 0})
 
 
@@ -87,7 +87,7 @@ async def get_chunks(
     Retrieve multiple chunks matching the filter with optional pagination.
     Returns a list of dictionaries.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     filter_query = filter_query or {}
     cursor = collection.find(filter_query, {"_id": 0})
     
@@ -115,7 +115,7 @@ async def update_embedding_status(
     Returns:
         int: Number of documents modified.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
 
     # Normalize input to list
     if isinstance(chunk_ids, str):
@@ -137,7 +137,7 @@ async def update_chunk(
     Update any fields of a single chunk by chunkId.
     Returns the number of documents modified (0 or 1).
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     result = await collection.update_one({"chunkId": chunk_id}, {"$set": updates})
     return result.modified_count
 
@@ -149,7 +149,7 @@ async def update_chunks(
     Update any fields for multiple chunks matching the filter.
     Returns the number of documents modified.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     result = await collection.update_many(filter_query, {"$set": updates})
     return result.modified_count
 
@@ -158,7 +158,7 @@ async def delete_chunk(chunk_id: str, mongo_db: Database = None) -> int:
     """
     Delete a chunk by its ID.
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     result = await collection.delete_one({"chunkId": chunk_id})
     return result.deleted_count
 
