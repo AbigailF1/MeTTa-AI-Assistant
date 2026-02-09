@@ -193,9 +193,13 @@ class UniversalMettaScraper:
                 href = link.get("href")
                 if not href:
                     continue
-                full_url = self._normalize_url(urljoin(self.base_url, href))
-                if self._should_scrape_url(full_url) and full_url not in seen:
-                    queue.append(full_url)
+                candidate_urls = {
+                    self._normalize_url(urljoin(current, href)),
+                    self._normalize_url(urljoin(self.base_url, href)),
+                }
+                for full_url in candidate_urls:
+                    if self._should_scrape_url(full_url) and full_url not in seen:
+                        queue.append(full_url)
 
         print(f"Discovered {len(discovered)} URLs for {self.site_name}")
         return discovered
@@ -354,7 +358,23 @@ class UniversalMettaScraper:
     ) -> Dict[str, Any]:
         """Extract all content from a page and classify it."""
         content = []
-        page_title = soup.find("h1")
+        is_mkdocs = False
+        generator_meta = soup.find("meta", attrs={"name": "generator"})
+        if generator_meta:
+            generator_value = generator_meta.get("content", "").lower()
+            is_mkdocs = "mkdocs" in generator_value
+
+        content_root = soup
+        if is_mkdocs:
+            content_root = (
+                soup.select_one("main .md-content__inner")
+                or soup.select_one(".md-content__inner")
+                or soup.select_one("article")
+                or soup.select_one("main")
+                or soup
+            )
+
+        page_title = content_root.find("h1")
         page_title = (
             self._extract_text_with_links(page_title)
             if page_title
@@ -366,7 +386,7 @@ class UniversalMettaScraper:
             content.extend(await self._extract_vercel_content(soup, url))
         else:
             # Standard extraction for other sites
-            content.extend(self._extract_standard_content(soup))
+            content.extend(self._extract_standard_content(content_root, url))
 
         content_text = "\n".join(filter(None, content))
         content_text = self._clean_text(content_text)
@@ -442,7 +462,7 @@ class UniversalMettaScraper:
             print(f"Error extracting CodeMirror content: {e}")
             return []
 
-    def _extract_standard_content(self, soup: BeautifulSoup) -> List[str]:
+    def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> List[str]:
         """Extract content using standard HTML parsing."""
         content = []
 
@@ -464,7 +484,8 @@ class UniversalMettaScraper:
                         r"<span.*?</span>", "", code_text, flags=re.DOTALL
                     )
                     code_text = BeautifulSoup(code_text, "lxml").text.strip()
-                    content.append(f"```metta\n{code_text}\n```")
+                    lang = self._guess_code_language(url, code_text)
+                    content.append(f"```{lang}\n{code_text}\n```")
             elif elem.name in ["ul", "ol"]:
                 list_text = []
                 for li in elem.find_all("li", recursive=False):
@@ -485,10 +506,78 @@ class UniversalMettaScraper:
 
         return content
 
+    def _guess_code_language(self, url: str, code_text: str) -> str:
+        """Guess code language based on site, URL, and code content."""
+        lower = code_text.lower()
+
+        def looks_like_metta(text: str) -> bool:
+            return re.search(r"^\s*\(", text, re.M) is not None
+
+        def looks_like_python(text: str) -> bool:
+            return re.search(r"\b(def|class|import|from|self|elif|except|none|true|false|lambda|async|await|with|yield|try)\b", text) is not None
+
+        def looks_like_python_strong(text: str) -> bool:
+            return re.search(
+                r"^\s*(def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+(?:\.\w+)*\s+import|async\s+def\s+\w+)",
+                text,
+                re.M,
+            ) is not None
+
+        def looks_like_c(text: str) -> bool:
+            return re.search(r"\b(#include|typedef|struct|printf|size_t|null)\b", text) is not None or ";" in text
+
+        def looks_like_rust(text: str) -> bool:
+            return re.search(r"\b(fn|let|mut|impl|trait|pub|crate)\b", text) is not None or "::" in text
+
+        def looks_like_pseudo(text: str) -> bool:
+            return re.search(r"\b(for each|procedure|algorithm|end if|end for|elseif|then)\b", text) is not None or "..." in text or "…" in text
+
+        # Strong content signals first
+        if looks_like_metta(code_text):
+            return "metta"
+        if self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            path = urlparse(url).path.lower()
+            if "/rust/" in path:
+                return "rust"
+            if "/c/" in path:
+                return "c"
+            if looks_like_metta(code_text):
+                return "metta"
+            if looks_like_python_strong(lower):
+                return "python"
+            if looks_like_pseudo(lower):
+                return "pseudo"
+            if "/reference/" in path or "/metta" in path or "/minimal-metta" in path:
+                return "pseudo"
+            return "metta"
+
+        if looks_like_pseudo(lower) and not looks_like_python_strong(lower):
+            return "pseudo"
+        if looks_like_python(lower):
+            return "python"
+        if looks_like_rust(lower):
+            return "rust"
+        if looks_like_c(lower):
+            return "c"
+        if looks_like_pseudo(lower):
+            return "pseudo"
+
+        if self.site_name in {
+            "metta-stdlib.readthedocs.io",
+            "metta-lang.dev",
+            "metta-learner-playground.vercel.app",
+        }:
+            return "metta"
+
+        return "text"
+
     @staticmethod
     def _clean_text(text: str) -> str:
         """Clean and normalize text, decoding Unicode escapes and removing doc artifacts."""
-        text = codecs.decode(text, "unicode_escape")
+        try:
+            text = codecs.decode(text, "unicode_escape")
+        except UnicodeDecodeError:
+            text = codecs.decode(text, "unicode_escape", errors="replace")
 
         text = re.sub(r"¶", "", text)
         text = re.sub(r"© Copyright.*", "", text, flags=re.DOTALL | re.IGNORECASE)
