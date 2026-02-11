@@ -9,6 +9,7 @@ from fastapi import (
     Response,
     BackgroundTasks,
 )
+from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_chat_service, get_current_user
 from app.services.chat_service import ChatService
@@ -84,3 +85,45 @@ async def chat(
     except Exception as e:
         logger.error(f"Chat request failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Chat failed: Retry later")
+
+
+@router.post("/stream", summary="Stream chat response")
+async def chat_stream(
+    request: Request,
+    chat_request: ChatRequest,
+    background_tasks: BackgroundTasks,
+    chat_service: ChatService = Depends(get_chat_service),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Streaming chat endpoint.
+    """
+    provider = chat_request.provider
+    if not provider:
+        raise HTTPException(status_code=400, detail="Provider must be specified")
+
+    encrypted_key = request.cookies.get(provider.lower())
+
+    try:
+        generator = await chat_service.process_streaming_chat_request(
+            query=chat_request.query,
+            user_id=current_user["id"],
+            provider=provider,
+            background_tasks=background_tasks,
+            model=chat_request.model,
+            session_id=chat_request.session_id,
+            encrypted_api_key=encrypted_key,
+            top_k=chat_request.top_k,
+        )
+
+        return StreamingResponse(
+            generator,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Streaming chat request failed: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Streaming failed")

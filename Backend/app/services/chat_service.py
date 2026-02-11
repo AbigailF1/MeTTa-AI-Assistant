@@ -10,6 +10,7 @@ This service orchestrates:
 """
 import os
 import time
+import json
 import asyncio
 from typing import Optional, Dict, Any, List, Literal
 from datetime import datetime, timedelta, timezone
@@ -22,7 +23,6 @@ from app.core.logging import logger
 from app.core.clients.llm_clients import LLMClient, LLMProvider
 from app.services.key_management_service import KMS
 from app.rag.retriever.retriever import EmbeddingRetriever
-from app.rag.generator.rag_generator import RAGGenerator
 from app.rag.generator.rag_generator import RAGGenerator
 from app.db.chat_db import (
     insert_chat_message,
@@ -200,6 +200,7 @@ class ChatService:
             generator = RAGGenerator(
                 retriever=retriever,
                 llm_client=self.default_llm_client,
+                mongo_db=self.mongo_db,
             )
         else:
             provider_enum = LLMProvider(provider.lower())
@@ -207,6 +208,7 @@ class ChatService:
                 retriever=retriever,
                 provider=provider_enum,
                 model_name=model,
+                mongo_db=self.mongo_db,
             )
         
         # Save user message
@@ -277,6 +279,122 @@ class ChatService:
         result["responseId"] = response_id
         
         return result
+
+    async def generate_streaming_response(
+        self,
+        query: str,
+        session_id: str,
+        user_id: str,
+        provider: Literal["openai", "gemini"],
+        background_tasks: BackgroundTasks,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        top_k: int = 5,
+    ):
+        """
+        Generate a streaming response using RAG pipeline.
+        Yields events for SSE.
+        """
+        start_time = time.time()
+        
+        # Create retriever
+        retriever = EmbeddingRetriever(
+            model=self.embedding_model,
+            qdrant=self.qdrant_client,
+            collection_name=self.collection_name,
+        )
+        
+        # Create generator
+        if provider.lower() == "gemini" and not model:
+            generator = RAGGenerator(
+                retriever=retriever,
+                llm_client=self.default_llm_client,
+                mongo_db=self.mongo_db,
+            )
+        else:
+            provider_enum = LLMProvider(provider.lower())
+            generator = RAGGenerator(
+                retriever=retriever,
+                provider=provider_enum,
+                model_name=model,
+                mongo_db=self.mongo_db,
+            )
+        
+        # Save user message
+        user_message_id = await insert_chat_message(
+            {
+                "sessionId": session_id,
+                "role": "user",
+                "content": query,
+            },
+            mongo_db=self.mongo_db,
+        )
+        
+        # Get chat history
+        history = await self.get_chat_history(session_id, limit=10)
+        is_first_message = len(history) == 0
+
+        # Initial metadata
+        response_id = f"resp_{ObjectId()}"
+        full_response = []
+        sources = []
+
+        # Yield initial metadata
+        yield f"data: {json.dumps({'type': 'start', 'session_id': session_id, 'userMessageId': user_message_id, 'responseId': response_id})}\n\n"
+
+        # Stream from generator
+        async for item in generator.stream_response(
+            query,
+            top_k=top_k,
+            api_key=api_key,
+            include_sources=True,
+            history=history,
+        ):
+            if "sources" in item:
+                sources = item["sources"]
+                yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+            if "chunk" in item:
+                chunk = item["chunk"]
+                full_response.append(chunk)
+                yield f"data: {json.dumps({'type': 'chunk', 'chunk': chunk})}\n\n"
+
+        final_content = "".join(full_response)
+        
+        # Save assistant message
+        message_id = await insert_chat_message(
+            {
+                "sessionId": session_id,
+                "role": "assistant",
+                "content": final_content,
+                "responseId": response_id,
+            },
+            mongo_db=self.mongo_db,
+        )
+
+        yield f"data: {json.dumps({'type': 'end', 'messageId': message_id})}\n\n"
+
+        # Log RAG interaction in background
+        background_tasks.add_task(
+            self._log_interaction,
+            query=query,
+            response=final_content,
+            sources=sources,
+            session_id=session_id,
+            provider=provider,
+            model=model,
+            response_id=response_id,
+            execution_time=time.time() - start_time,
+        )
+
+        # If first message, generate title in background
+        if is_first_message:
+            background_tasks.add_task(
+                self.generate_session_title,
+                session_id=session_id,
+                query=query,
+                response=final_content,
+                provider=provider,
+            )
 
     async def generate_session_title(
         self,
@@ -388,6 +506,39 @@ class ChatService:
         
         # Handle generate mode
         return await self.generate_response(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            provider=provider,
+            background_tasks=background_tasks,
+            model=model,
+            api_key=api_key if api_key else None,
+            top_k=top_k,
+        )
+
+    async def process_streaming_chat_request(
+        self,
+        query: str,
+        user_id: str,
+        provider: Literal["openai", "gemini"],
+        background_tasks: BackgroundTasks,
+        model: Optional[str] = None,
+        session_id: Optional[str] = None,
+        encrypted_api_key: Optional[str] = None,
+        top_k: int = 5,
+    ):
+        """
+        Main entry point for processing streaming chat requests.
+        """
+        # Decrypt API key if provided
+        api_key = await self.decrypt_api_key(
+            encrypted_api_key, user_id, provider
+        )
+        
+        # Get or create session
+        session_id, _ = await self.get_or_create_session(session_id, user_id)
+        
+        return self.generate_streaming_response(
             query=query,
             session_id=session_id,
             user_id=user_id,

@@ -1,8 +1,21 @@
 import axiosInstance, { handleAxiosError } from '../lib/axios';
 import type { ChatSession, SessionsResponse, Message, ChatSessionWithMessages, CursorMessagesResponse } from '../types/chat';
+import { getAccessToken } from '../lib/auth';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const SESSIONS_BASE_URL = '/api/chat/sessions';
 const CHAT_BASE_URL = '/api/chat';
+
+export interface StreamEvent {
+  type: 'start' | 'sources' | 'chunk' | 'end' | 'error';
+  chunk?: string;
+  sources?: any[];
+  session_id?: string;
+  userMessageId?: string;
+  responseId?: string;
+  messageId?: string;
+  error?: string;
+}
 
 // Re-exporting ChatRequest and ChatResponse for message sending
 export interface ChatRequest {
@@ -109,6 +122,64 @@ export const sendMessage = async (data: ChatRequest): Promise<ChatResponse> => {
     return response.data;
   } catch (error) {
     handleAxiosError(error, 'Chat');
+    throw error;
+  }
+};
+
+// Stream a chat message
+export const streamMessage = async (
+  data: ChatRequest,
+  onEvent: (event: StreamEvent) => void
+): Promise<void> => {
+  try {
+    const token = getAccessToken();
+    const response = await fetch(`${API_BASE_URL}${CHAT_BASE_URL}/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        // useChatStore handles the retry logic for 401
+        throw { response: { status: 401 } };
+      }
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('ReadableStream not supported');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event: StreamEvent = JSON.parse(line.slice(6));
+            onEvent(event);
+          } catch (e) {
+            console.error('Failed to parse SSE event:', e);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Streaming error:', error);
+    onEvent({ type: 'error', error: String(error) });
     throw error;
   }
 };

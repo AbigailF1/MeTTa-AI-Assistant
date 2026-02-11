@@ -34,6 +34,10 @@ class BaseLLMClient(ABC):
         pass
 
     @abstractmethod
+    async def stream_text(self, prompt: str, **kwargs):
+        pass
+
+    @abstractmethod
     def get_provider(self) -> LLMProvider:
         pass
 
@@ -115,6 +119,28 @@ class LLMClient(BaseLLMClient):
     async def _generate_with_retry(self, prompt: str, api_key: Optional[str] = None, **kwargs):
         return await self._call_generate(prompt, api_key, **kwargs)
 
+    @async_retry(retry_on=_is_rate_limit)
+    async def _stream_with_retry(self, prompt: str, api_key: Optional[str] = None, **kwargs):
+        current_key = api_key or self._next_key()
+        temperature = kwargs.get("temperature", 0.7)
+        
+        if self._provider == LLMProvider.GEMINI:
+            client = init_chat_model(
+                model=self._model_name,
+                model_provider="google_genai",
+                google_api_key=current_key,
+                temperature=temperature,
+            )
+        else:
+            client = init_chat_model(
+                model=self._model_name,
+                model_provider="openai",
+                api_key=current_key,
+                temperature=temperature,
+            )
+            
+        return client.astream(prompt)
+
     async def generate_text(
         self, prompt: str, api_key: Optional[str] = None, *, temperature: float = 0.7, max_tokens: int = 1000, **kwargs
     ) -> str:
@@ -124,6 +150,22 @@ class LLMClient(BaseLLMClient):
             )
             content = getattr(resp, "content", None)
             return content if content is not None else "[No content generated]"
+        except Exception as e:
+            if _is_rate_limit(e):
+                raise LLMQuotaExceededError(f"Rate limit/quota exceeded: {e}") from e
+            raise
+
+    async def stream_text(
+        self, prompt: str, api_key: Optional[str] = None, *, temperature: float = 0.7, **kwargs
+    ):
+        try:
+            stream = await self._stream_with_retry(
+                prompt, api_key=api_key, temperature=temperature, **kwargs
+            )
+            async for chunk in stream:
+                content = getattr(chunk, "content", None)
+                if content:
+                    yield content
         except Exception as e:
             if _is_rate_limit(e):
                 raise LLMQuotaExceededError(f"Rate limit/quota exceeded: {e}") from e

@@ -60,6 +60,47 @@ class RAGGenerator:
             query=query, response=response, client=self.llm_client, sources=sources
         )
 
+    async def stream_response(
+        self,
+        query: str,
+        top_k: int = 5,
+        api_key: Optional[str] = None,
+        include_sources: bool = False,
+        history: Optional[List[Dict[str, str]]] = None,
+    ):
+        """
+        Stream a response using RAG pipeline.
+        Yields:
+            Dict containing either 'sources' (first) or 'chunk' (subsequent)
+        """
+        prompt = RewriterUtils.rewrite_query(query, history)
+        rewritten_query_str = await self.llm_client.generate_text(prompt, api_key)
+
+        cleaned_query_str = re.sub(
+            r"```(?:json)?\n?(.*?)\n?```", r"\1", rewritten_query_str, flags=re.DOTALL
+        ).strip()
+
+        try:
+            rewritten_query = json.loads(cleaned_query_str)
+        except json.JSONDecodeError:
+            rewritten_query = {"retriever_needed": True, "query": query}
+
+        if rewritten_query.get("retriever_needed"):
+            retrieval_query = rewritten_query.get("query", query)
+            retrieved_docs = await self.retriever.retrieve(retrieval_query, top_k=top_k)
+            await self._expand_dependencies(retrieved_docs, max_depth=3)
+            context = self._assemble_context(retrieved_docs)
+            prompt = LLMResponseFormatter.build_rag_prompt(query, context, history)
+            
+            if include_sources:
+                yield {"sources": self._format_sources(retrieved_docs)}
+            
+            async for chunk in self.llm_client.stream_text(prompt, api_key):
+                yield {"chunk": chunk}
+        else:
+            response = rewritten_query.get("query", query)
+            yield {"chunk": response}
+
     def _assemble_context(self, docs_by_category: Dict[str, List[Document]]) -> str:
         context_parts = []
         for category, docs in docs_by_category.items():
