@@ -1,6 +1,7 @@
 import json
 import re
 import codecs
+import html
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -201,10 +202,19 @@ class UniversalMettaScraper:
                 href = link.get("href")
                 if not href:
                     continue
-                candidate_urls = {
-                    self._normalize_url(urljoin(current, href)),
-                    self._normalize_url(urljoin(self.base_url, href)),
-                }
+                parsed_current = urlparse(current)
+                if parsed_current.path.endswith("/") or parsed_current.path.endswith(
+                    ".html"
+                ):
+                    base_for_join = current
+                else:
+                    base_for_join = f"{current}/"
+                if href.startswith("http://") or href.startswith("https://"):
+                    candidate_urls = {self._normalize_url(href)}
+                elif href.startswith("/"):
+                    candidate_urls = {self._normalize_url(urljoin(self.base_url, href))}
+                else:
+                    candidate_urls = {self._normalize_url(urljoin(base_for_join, href))}
                 for full_url in candidate_urls:
                     if self._should_scrape_url(full_url) and full_url not in seen:
                         queue.append(full_url)
@@ -252,6 +262,8 @@ class UniversalMettaScraper:
             ) and path.endswith(".html")
         elif self.site_name == "trueagi-io.github.io/hyperon-experimental":
             if not path.startswith("/hyperon-experimental/"):
+                return False
+            if re.search(r"^/hyperon-experimental/(struct|trait|enum|fn|macro|constant|static)\.", path):
                 return False
             skip_paths = [
                 "/hyperon-experimental/assets/",
@@ -495,7 +507,10 @@ class UniversalMettaScraper:
                     code_text = re.sub(
                         r"<span.*?</span>", "", code_text, flags=re.DOTALL
                     )
-                    code_text = BeautifulSoup(code_text, "lxml").text.strip()
+                    if self.site_name == "trueagi-io.github.io/hyperon-experimental":
+                        code_text = html.unescape(code_text).strip()
+                    else:
+                        code_text = BeautifulSoup(code_text, "lxml").text.strip()
                     lang = self._guess_code_language(url, code_text)
                     content.append(f"```{lang}\n{code_text}\n```")
             elif elem.name in ["ul", "ol"]:
@@ -525,8 +540,10 @@ class UniversalMettaScraper:
             path = parsed.path.lower()
             fragment = (parsed.fragment or "").lower()
             if path.rstrip("/") == "/hyperon-experimental/metta":
-                code_upper = code_text.upper()
-                if "INPUT" in code_upper or "<" in code_text:
+                stripped = code_text.lstrip()
+                if not stripped.startswith("("):
+                    return "pseudo"
+                if "<" in code_text:
                     return "pseudo"
                 return "metta"
             if "/generated" in path:
