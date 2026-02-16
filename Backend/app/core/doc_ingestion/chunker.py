@@ -226,7 +226,7 @@ def _build_scraped_chunk_doc(
 
     chunk_id = hashlib.sha256(f"{url}:{chunk_text}".encode("utf-8")).hexdigest()[:16]
 
-    if "metta-lang.dev" in url:
+    if "metta-lang.dev" in url or "trueagi-io.github.io/hyperon-experimental" in url:
         source = "documentation"
     else:
         source = "others"

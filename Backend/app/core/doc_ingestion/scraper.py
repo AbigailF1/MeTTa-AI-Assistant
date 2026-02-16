@@ -1,6 +1,7 @@
 import json
 import re
 import codecs
+import html
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -14,6 +15,7 @@ class UniversalMettaScraper:
         self.site_name = site_name
         self.delay = delay
         self.visited = set()
+        self.page_cache: Dict[str, str] = {}
         self.pages: List[Dict[str, Any]] = []
 
         # Site configurations
@@ -65,6 +67,30 @@ class UniversalMettaScraper:
                 "hub_url": "/",
                 "link_selectors": ['a[href^="/"]'],
             },
+            "trueagi-io.github.io/hyperon-experimental": {
+                "base_url": "https://trueagi-io.github.io/hyperon-experimental/",
+                "needs_js": False,
+                "link_patterns": ["/hyperon-experimental/"],
+                "file_extensions": ["", ".html"],
+                "hub_url": "/hyperon-experimental/",
+                "crawl_all": True,
+                "seed_urls": [
+                    "/hyperon-experimental/rust/hyperon/index.html",
+                    "/hyperon-experimental/c/index.html",
+                ],
+                "link_selectors": [
+                    'a[href^="/hyperon-experimental/"]',
+                    'a[href^="https://trueagi-io.github.io/hyperon-experimental/"]',
+                    'a[href^="./"]',
+                    'a[href^="metta/"]',
+                    'a[href^="generated/"]',
+                    'a[href^="reference/"]',
+                    'a[href^="modules"]',
+                    'a[href^="das"]',
+                    'a[href^="rust/"]',
+                    'a[href^="c/"]',
+                ],
+            },
         }
 
         if site_name not in self.sites_config:
@@ -77,9 +103,12 @@ class UniversalMettaScraper:
 
     async def fetch_page(self, url: str) -> str:
         """Fetch HTML content, using Playwright only when needed."""
+        url = self._normalize_url(url)
+        if url in self.page_cache:
+            return self.page_cache[url]
         if url in self.visited:
             print(f"Skipping already visited: {url}")
-            return ""
+            return self.page_cache.get(url, "")
 
         try:
             if self.config["needs_js"]:
@@ -96,6 +125,7 @@ class UniversalMettaScraper:
                 content = response.text
 
             self.visited.add(url)
+            self.page_cache[url] = content
             import asyncio
 
             await asyncio.sleep(self.delay)
@@ -143,6 +173,55 @@ class UniversalMettaScraper:
         print(f"Discovered {len(urls)} URLs for {self.site_name}")
         return urls
 
+    async def discover_all_urls(self, hub_url: str) -> List[str]:
+        """Crawl all internal URLs starting from hub_url."""
+        start_url = self._normalize_url(urljoin(self.base_url, hub_url))
+        queue = [start_url]
+        seed_urls = self.config.get("seed_urls", [])
+        if seed_urls:
+            for seed in seed_urls:
+                queue.append(self._normalize_url(urljoin(self.base_url, seed)))
+        discovered = []
+        seen = set()
+
+        while queue:
+            current = self._normalize_url(queue.pop(0))
+            if current in seen:
+                continue
+            seen.add(current)
+
+            html = await self.fetch_page(current)
+            if not html:
+                continue
+
+            if self._should_scrape_url(current):
+                discovered.append(current)
+
+            soup = BeautifulSoup(html, "lxml")
+            for link in soup.select("a[href]"):
+                href = link.get("href")
+                if not href:
+                    continue
+                parsed_current = urlparse(current)
+                if parsed_current.path.endswith("/") or parsed_current.path.endswith(
+                    ".html"
+                ):
+                    base_for_join = current
+                else:
+                    base_for_join = f"{current}/"
+                if href.startswith("http://") or href.startswith("https://"):
+                    candidate_urls = {self._normalize_url(href)}
+                elif href.startswith("/"):
+                    candidate_urls = {self._normalize_url(urljoin(self.base_url, href))}
+                else:
+                    candidate_urls = {self._normalize_url(urljoin(base_for_join, href))}
+                for full_url in candidate_urls:
+                    if self._should_scrape_url(full_url) and full_url not in seen:
+                        queue.append(full_url)
+
+        print(f"Discovered {len(discovered)} URLs for {self.site_name}")
+        return discovered
+
     def _is_valid_url(self, path: str) -> bool:
         """Check if URL path matches site patterns."""
         for pattern in self.config["link_patterns"]:
@@ -152,16 +231,13 @@ class UniversalMettaScraper:
 
     def _should_scrape_url(self, url: str) -> bool:
         """Determine if URL should be scraped based on site rules."""
+        url = self._normalize_url(url)
         parsed = urlparse(url)
         path = parsed.path
 
         # Skip external links
         if parsed.netloc != urlparse(self.base_url).netloc:
             return False
-
-        # Skip fragments and query parameters
-        if "#" in url or "?" in url:
-            url = url.split("#")[0].split("?")[0]
 
         # Check file extensions
         if self.config["file_extensions"]:
@@ -184,8 +260,34 @@ class UniversalMettaScraper:
             return not any(
                 path.startswith(skip) for skip in skip_paths
             ) and path.endswith(".html")
+        elif self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            if not path.startswith("/hyperon-experimental/"):
+                return False
+            if re.search(r"^/hyperon-experimental/(struct|trait|enum|fn|macro|constant|static)\.", path):
+                return False
+            skip_paths = [
+                "/hyperon-experimental/assets/",
+                "/hyperon-experimental/stylesheets/",
+                "/hyperon-experimental/javascripts/",
+                "/hyperon-experimental/search/",
+                "/hyperon-experimental/sitemap.xml",
+            ]
+            if any(path.startswith(skip) for skip in skip_paths):
+                return False
+            if ("/rust/" in path or "/c/" in path) and "/src/" in path:
+                return False
+            return True
 
         return True
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalize URL by removing fragments/query and trimming trailing slash."""
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        if path.endswith("/") and path != "/":
+            path = path[:-1]
+        return parsed._replace(path=path, query="", fragment="").geturl()
 
     def classify_page(self, url: str, content: str) -> str:
         """Classify the page based on URL and content."""
@@ -224,6 +326,25 @@ class UniversalMettaScraper:
             else:
                 return "MeTTa Learning Content"
 
+        elif self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            if "/generated/" in path:
+                return "Generated Modules"
+            if "/reference/" in path:
+                return "Reference"
+            if "/rust/" in path:
+                return "Rust API Reference"
+            if "/c/" in path:
+                return "C API Reference"
+            if "/metta/" in path or "/minimal-metta/" in path:
+                return "MeTTa Specification"
+            if "/modules" in path:
+                return "Modules"
+            if "/das" in path:
+                return "DAS"
+            if "/development" in path or "/contributing" in path:
+                return "Development"
+            return "Hyperon Documentation"
+
         elif self.site_name == "metta-lang.dev":
             if "stdlib_overview" in path:
                 return "Standard Library"
@@ -261,7 +382,23 @@ class UniversalMettaScraper:
     ) -> Dict[str, Any]:
         """Extract all content from a page and classify it."""
         content = []
-        page_title = soup.find("h1")
+        is_mkdocs = False
+        generator_meta = soup.find("meta", attrs={"name": "generator"})
+        if generator_meta:
+            generator_value = generator_meta.get("content", "").lower()
+            is_mkdocs = "mkdocs" in generator_value
+
+        content_root = soup
+        if is_mkdocs:
+            content_root = (
+                soup.select_one("main .md-content__inner")
+                or soup.select_one(".md-content__inner")
+                or soup.select_one("article")
+                or soup.select_one("main")
+                or soup
+            )
+
+        page_title = content_root.find("h1")
         page_title = (
             self._extract_text_with_links(page_title)
             if page_title
@@ -273,7 +410,7 @@ class UniversalMettaScraper:
             content.extend(await self._extract_vercel_content(soup, url))
         else:
             # Standard extraction for other sites
-            content.extend(self._extract_standard_content(soup))
+            content.extend(self._extract_standard_content(content_root, url))
 
         content_text = "\n".join(filter(None, content))
         content_text = self._clean_text(content_text)
@@ -349,7 +486,7 @@ class UniversalMettaScraper:
             print(f"Error extracting CodeMirror content: {e}")
             return []
 
-    def _extract_standard_content(self, soup: BeautifulSoup) -> List[str]:
+    def _extract_standard_content(self, soup: BeautifulSoup, url: str) -> List[str]:
         """Extract content using standard HTML parsing."""
         content = []
 
@@ -370,8 +507,12 @@ class UniversalMettaScraper:
                     code_text = re.sub(
                         r"<span.*?</span>", "", code_text, flags=re.DOTALL
                     )
-                    code_text = BeautifulSoup(code_text, "lxml").text.strip()
-                    content.append(f"```metta\n{code_text}\n```")
+                    if self.site_name == "trueagi-io.github.io/hyperon-experimental":
+                        code_text = html.unescape(code_text).strip()
+                    else:
+                        code_text = BeautifulSoup(code_text, "lxml").text.strip()
+                    lang = self._guess_code_language(url, code_text)
+                    content.append(f"```{lang}\n{code_text}\n```")
             elif elem.name in ["ul", "ol"]:
                 list_text = []
                 for li in elem.find_all("li", recursive=False):
@@ -392,10 +533,57 @@ class UniversalMettaScraper:
 
         return content
 
+    def _guess_code_language(self, url: str, code_text: str) -> str:
+        """Guess code language based on site, URL, and code content."""
+        if self.site_name == "trueagi-io.github.io/hyperon-experimental":
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+            fragment = (parsed.fragment or "").lower()
+            if path.rstrip("/") == "/hyperon-experimental/metta":
+                stripped = code_text.lstrip()
+                if not stripped.startswith("("):
+                    return "pseudo"
+                if "<" in code_text:
+                    return "pseudo"
+                return "metta"
+            if "/generated" in path:
+                return "metta"
+            if "/minimal-metta" in path:
+                return "metta"
+            if "/das_setup" in path:
+                return "bash"
+            if "/development" in path:
+                return "bash"
+            if "/contributing" in path:
+                return "text"
+            if "/modules_dev" in path:
+                if fragment == "implementing-a-moduleloader":
+                    return "rust"
+                return "pseudo"
+            if "/rust/" in path:
+                return "rust"
+            if "/c/" in path:
+                return "c"
+            if "/reference/" in path:
+                return "python"
+            return "metta"
+
+        if self.site_name in {
+            "metta-stdlib.readthedocs.io",
+            "metta-lang.dev",
+            "metta-learner-playground.vercel.app",
+        }:
+            return "metta"
+
+        return "text"
+
     @staticmethod
     def _clean_text(text: str) -> str:
         """Clean and normalize text, decoding Unicode escapes and removing doc artifacts."""
-        text = codecs.decode(text, "unicode_escape")
+        try:
+            text = codecs.decode(text, "unicode_escape")
+        except UnicodeDecodeError:
+            text = codecs.decode(text, "unicode_escape", errors="replace")
 
         text = re.sub(r"¶", "", text)
         text = re.sub(r"© Copyright.*", "", text, flags=re.DOTALL | re.IGNORECASE)
@@ -407,7 +595,10 @@ class UniversalMettaScraper:
         if hub_url is None:
             hub_url = self.config["hub_url"]
 
-        tutorial_urls = await self.extract_tutorial_urls(hub_url)
+        if self.config.get("crawl_all"):
+            tutorial_urls = await self.discover_all_urls(hub_url)
+        else:
+            tutorial_urls = await self.extract_tutorial_urls(hub_url)
 
         hub_html = await self.fetch_page(urljoin(self.base_url, hub_url))
         if hub_html:
