@@ -73,6 +73,10 @@ class UniversalMettaScraper:
                 "file_extensions": ["", ".html"],
                 "hub_url": "/hyperon-experimental/",
                 "crawl_all": True,
+                "seed_urls": [
+                    "/hyperon-experimental/rust/hyperon/index.html",
+                    "/hyperon-experimental/c/index.html",
+                ],
                 "link_selectors": [
                     'a[href^="/hyperon-experimental/"]',
                     'a[href^="https://trueagi-io.github.io/hyperon-experimental/"]',
@@ -172,6 +176,10 @@ class UniversalMettaScraper:
         """Crawl all internal URLs starting from hub_url."""
         start_url = self._normalize_url(urljoin(self.base_url, hub_url))
         queue = [start_url]
+        seed_urls = self.config.get("seed_urls", [])
+        if seed_urls:
+            for seed in seed_urls:
+                queue.append(self._normalize_url(urljoin(self.base_url, seed)))
         discovered = []
         seen = set()
 
@@ -252,7 +260,11 @@ class UniversalMettaScraper:
                 "/hyperon-experimental/search/",
                 "/hyperon-experimental/sitemap.xml",
             ]
-            return not any(path.startswith(skip) for skip in skip_paths)
+            if any(path.startswith(skip) for skip in skip_paths):
+                return False
+            if ("/rust/" in path or "/c/" in path) and "/src/" in path:
+                return False
+            return True
 
         return True
 
@@ -508,59 +520,36 @@ class UniversalMettaScraper:
 
     def _guess_code_language(self, url: str, code_text: str) -> str:
         """Guess code language based on site, URL, and code content."""
-        lower = code_text.lower()
-
-        def looks_like_metta(text: str) -> bool:
-            return re.search(r"^\s*\(", text, re.M) is not None
-
-        def looks_like_python(text: str) -> bool:
-            return re.search(r"\b(def|class|import|from|self|elif|except|none|true|false|lambda|async|await|with|yield|try)\b", text) is not None
-
-        def looks_like_python_strong(text: str) -> bool:
-            return re.search(
-                r"^\s*(def\s+\w+|class\s+\w+|import\s+\w+|from\s+\w+(?:\.\w+)*\s+import|async\s+def\s+\w+)",
-                text,
-                re.M,
-            ) is not None
-
-        def looks_like_c(text: str) -> bool:
-            return re.search(r"\b(#include|typedef|struct|printf|size_t|null)\b", text) is not None or ";" in text
-
-        def looks_like_rust(text: str) -> bool:
-            return re.search(r"\b(fn|let|mut|impl|trait|pub|crate)\b", text) is not None or "::" in text
-
-        def looks_like_pseudo(text: str) -> bool:
-            return re.search(r"\b(for each|procedure|algorithm|end if|end for|elseif|then)\b", text) is not None or "..." in text or "…" in text
-
-        # Strong content signals first
-        if looks_like_metta(code_text):
-            return "metta"
         if self.site_name == "trueagi-io.github.io/hyperon-experimental":
-            path = urlparse(url).path.lower()
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+            fragment = (parsed.fragment or "").lower()
+            if path.rstrip("/") == "/hyperon-experimental/metta":
+                code_upper = code_text.upper()
+                if "INPUT" in code_upper or "<" in code_text:
+                    return "pseudo"
+                return "metta"
+            if "/generated" in path:
+                return "metta"
+            if "/minimal-metta" in path:
+                return "metta"
+            if "/das_setup" in path:
+                return "bash"
+            if "/development" in path:
+                return "bash"
+            if "/contributing" in path:
+                return "text"
+            if "/modules_dev" in path:
+                if fragment == "implementing-a-moduleloader":
+                    return "rust"
+                return "pseudo"
             if "/rust/" in path:
                 return "rust"
             if "/c/" in path:
                 return "c"
-            if looks_like_metta(code_text):
-                return "metta"
-            if looks_like_python_strong(lower):
+            if "/reference/" in path:
                 return "python"
-            if looks_like_pseudo(lower):
-                return "pseudo"
-            if "/reference/" in path or "/metta" in path or "/minimal-metta" in path:
-                return "pseudo"
             return "metta"
-
-        if looks_like_pseudo(lower) and not looks_like_python_strong(lower):
-            return "pseudo"
-        if looks_like_python(lower):
-            return "python"
-        if looks_like_rust(lower):
-            return "rust"
-        if looks_like_c(lower):
-            return "c"
-        if looks_like_pseudo(lower):
-            return "pseudo"
 
         if self.site_name in {
             "metta-stdlib.readthedocs.io",
