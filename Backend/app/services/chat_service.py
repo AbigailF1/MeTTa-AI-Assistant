@@ -352,7 +352,7 @@ class ChatService:
         ):
             if "sources" in item:
                 sources = item["sources"]
-                yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+
             if "chunk" in item:
                 chunk = item["chunk"]
                 full_response.append(chunk)
@@ -522,6 +522,7 @@ class ChatService:
         user_id: str,
         provider: Literal["openai", "gemini"],
         background_tasks: BackgroundTasks,
+        mode: Literal["search", "generate"] = "generate",
         model: Optional[str] = None,
         session_id: Optional[str] = None,
         encrypted_api_key: Optional[str] = None,
@@ -537,6 +538,14 @@ class ChatService:
         
         # Get or create session
         session_id, _ = await self.get_or_create_session(session_id, user_id)
+
+        if mode == "search":
+            async def search_generator():
+                result = await self.perform_search(query, top_k)
+                yield f"data: {json.dumps({'type': 'params', 'mode': 'search', 'result': result})}\n\n"
+                yield f"data: {json.dumps({'type': 'end'})}\n\n"
+            
+            return search_generator()
         
         return self.generate_streaming_response(
             query=query,

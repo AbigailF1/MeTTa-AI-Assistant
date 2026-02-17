@@ -111,6 +111,7 @@ async def chat_stream(
             provider=provider,
             background_tasks=background_tasks,
             model=chat_request.model,
+            mode=chat_request.mode,
             session_id=chat_request.session_id,
             encrypted_api_key=encrypted_key,
             top_k=chat_request.top_k,
@@ -124,6 +125,18 @@ async def chat_stream(
                 "Connection": "keep-alive",
             },
         )
+
+        if encrypted_key and encrypted_key.strip():
+            response.set_cookie(
+                key=provider.lower(),
+                value=encrypted_key,
+                httponly=True,
+                samesite="none",
+                secure=True,
+                expires=(datetime.now(timezone.utc) + timedelta(days=7)),
+            )
+
+        return response
     except Exception as e:
         logger.error(f"Streaming chat request failed: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Streaming failed")

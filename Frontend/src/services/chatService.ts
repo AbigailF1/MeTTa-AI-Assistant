@@ -31,10 +31,10 @@ export interface ChatResponse {
   response: string;
   model: string;
   provider: string;
-  session_id: string; 
-  responseId?: string; 
-  messageId?: string; 
-  userMessageId?: string; 
+  session_id: string;
+  responseId?: string;
+  messageId?: string;
+  userMessageId?: string;
 }
 
 // Fetch paginated chat sessions
@@ -139,6 +139,7 @@ export const streamMessage = async (
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      credentials: 'include',
       body: JSON.stringify(data),
     });
 
