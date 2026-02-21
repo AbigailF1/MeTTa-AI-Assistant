@@ -136,9 +136,10 @@ class UserWindowRateLimiter(BaseHTTPMiddleware):
         return False
 
     async def dispatch(self, request: Request, call_next):
-        if not request.url.path == "/api/chat/":
+        RATE_LIMITED_PATHS = ["/api/chat/", "/api/chat/stream"]
+        if not any(request.url.path == path for path in RATE_LIMITED_PATHS):
             return await call_next(request)
-        
+
         user = getattr(request.state, "user", None)
         if not user:
             return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
@@ -147,7 +148,6 @@ class UserWindowRateLimiter(BaseHTTPMiddleware):
         user_role = user.get("role")
 
         if await self._is_using_user_api_key(request, user_id):
-            
             logger.info(f"Rate limiting skipped for user {user_id} - using own API key")
             
             return await call_next(request)
@@ -174,11 +174,11 @@ class UserWindowRateLimiter(BaseHTTPMiddleware):
                 status_code=429,
                 content={"detail": f"Rate limit exceeded. Try again in {ttl_remaining} seconds."},
             )
-            
+
         response = await call_next(request)
-        
+
         response.headers["X-RateLimit-Limit"] = str(self.max_requests)
         response.headers["X-RateLimit-Remaining"] = str(self.max_requests - req_count)
         response.headers["X-RateLimit-Reset"] = str(await self.redis.ttl(redis_key))
-        
+
         return response

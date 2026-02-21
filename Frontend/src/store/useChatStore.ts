@@ -8,6 +8,7 @@ import {
   getSessionMessagesCursor as apiGetSessionMessagesCursor,
   deleteChatSession as apiDeleteChatSession,
   sendMessage as apiSendMessage,
+  streamMessage as apiStreamMessage,
   getSession as apiGetSession,
 } from '../services/chatService';
 import { refreshAccessToken, isAuthenticated } from '../lib/auth';
@@ -463,79 +464,93 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
           ? 'openai'
           : 'gemini';
 
-      const response = await apiSendMessage({
-        query,
-        session_id: !selectedSessionId || isTempSession ? undefined : selectedSessionId,
-        provider,
-        mode: 'generate',
-      });
+      let fullResponse = '';
+      let realSessionId = selectedSessionId || '';
+      let userMessageId = '';
+      let messageId = '';
+      let responseId = '';
 
-      const assistantMessage: Message = {
-        id: response.messageId || Date.now().toString(),
-        role: 'assistant',
-        content: response.response || 'No response received',
-        timestamp: Date.now(),
-        responseId: response.responseId, // Store responseId for feedback
-      };
-      console.log('[useChatStore] Received response from backend:', {
-        responseId: response.responseId,
-        sessionId: response.session_id,
-        content: response.response?.substring(0, 50) + '...'
-      });
+      await apiStreamMessage(
+        {
+          query,
+          session_id: !selectedSessionId || isTempSession ? undefined : selectedSessionId,
+          provider,
+          mode: 'generate',
+        },
+        (event) => {
+          if (event.type === 'start') {
+            if (event.session_id) realSessionId = event.session_id;
+            if (event.userMessageId) userMessageId = event.userMessageId;
+            if (event.responseId) responseId = event.responseId;
+          } else if (event.type === 'chunk' && event.chunk) {
+            fullResponse += event.chunk;
+            set((state) => ({
+              messages: state.messages.map((msg) =>
+                msg.id === thinkingMessage.id
+                  ? { ...msg, content: fullResponse, isLoading: false }
+                  : msg
+              ),
+            }));
+          } else if (event.type === 'end') {
+            if (event.messageId) messageId = event.messageId;
 
-      const realSessionId = response.session_id || selectedSessionId;
+            set((state) => ({
+              messages: state.messages.map((msg) => {
+                if (msg.id === thinkingMessage.id) {
+                  return {
+                    ...msg,
+                    id: messageId || msg.id,
+                    content: fullResponse,
+                    responseId: responseId,
+                  };
+                }
+                if (msg.id === userMessage.id && userMessageId) {
+                  return { ...msg, id: userMessageId };
+                }
+                return msg;
+              }),
+              sessions: (() => {
+                const existing = state.sessions.find(
+                  (s) => s.sessionId === selectedSessionId || s.sessionId === realSessionId
+                );
+                if (!existing) {
+                  return [
+                    {
+                      sessionId: realSessionId,
+                      createdAt: new Date().toISOString(),
+                      title: query,
+                    },
+                    ...state.sessions,
+                  ];
+                }
 
-      set((state) => ({
-        messages: state.messages.map((msg) => {
-          // Replace thinking message with actual assistant response
-          if (msg.id === thinkingMessage.id) return assistantMessage;
-          // Update user message with backend ID
-          if (msg.id === userMessage.id && response.userMessageId) {
-            return { ...msg, id: response.userMessageId };
+                return state.sessions.map((s) => {
+                  if (s.sessionId === selectedSessionId || s.sessionId === realSessionId) {
+                    return {
+                      ...s,
+                      sessionId: realSessionId,
+                      title: s.title || query,
+                    };
+                  }
+                  return s;
+                });
+              })(),
+              selectedSessionId: realSessionId,
+              isSendingMessage: false,
+            }));
+
+            setTimeout(() => {
+              get().refreshSession(realSessionId);
+            }, 3000);
+            
+            setTimeout(() => {
+              get().refreshSession(realSessionId);
+            }, 10000);
+          } else if (event.type === 'error') {
+            set({ error: event.error || 'Failed to get response', isSendingMessage: false });
           }
-          return msg;
-        }),
-        // If this session still has no title, derive it from the first query
-        sessions: (() => {
-          // Replace temp session id with the real backend id, or insert if not present
-          const existing = state.sessions.find((s) => s.sessionId === selectedSessionId || s.sessionId === realSessionId);
-          if (!existing) {
-            return [
-              {
-                sessionId: realSessionId,
-                createdAt: new Date().toISOString(),
-                title: query,
-              },
-              ...state.sessions,
-            ];
-          }
-
-          return state.sessions.map((s) => {
-            if (s.sessionId === selectedSessionId || s.sessionId === realSessionId) {
-              return {
-                ...s,
-                sessionId: realSessionId,
-                title: s.title || query,
-              };
-            }
-            return s;
-          });
-        })(),
-      }));
-
-      // Ensure selectedSessionId is updated to the real backend id
-      set((state) => ({
-        selectedSessionId: realSessionId,
-        isSendingMessage: false,
-      }));
-
-      setTimeout(() => {
-        get().refreshSession(realSessionId);
-      }, 3000); //Update session title
-      
-      setTimeout(() => {
-        get().refreshSession(realSessionId);
-      }, 10000); //Update session title backup
+        }
+      );
     } catch (err: any) {
       if (err?.response?.status === 401) {
         try {
@@ -547,63 +562,91 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
               ? 'openai'
               : 'gemini';
 
-          const response = await apiSendMessage({
-            query,
-            session_id: !selectedSessionId || isTempSession ? undefined : selectedSessionId,
-            provider,
-            mode: 'generate',
-          });
+          let fullResponse = '';
+          let realSessionId = selectedSessionId || '';
+          let userMessageId = '';
+          let messageId = '';
+          let responseId = '';
 
-          const assistantMessage: Message = {
-            id: response.messageId || Date.now().toString(),
-            role: 'assistant',
-            content: response.response || 'No response received',
-            timestamp: Date.now(),
-            responseId: response.responseId, // Store responseId for feedback
-          };
+          await apiStreamMessage(
+            {
+              query,
+              session_id: !selectedSessionId || isTempSession ? undefined : selectedSessionId,
+              provider,
+              mode: 'generate',
+            },
+            (event) => {
+              if (event.type === 'start') {
+                if (event.session_id) realSessionId = event.session_id;
+                if (event.userMessageId) userMessageId = event.userMessageId;
+                if (event.responseId) responseId = event.responseId;
+              } else if (event.type === 'chunk' && event.chunk) {
+                fullResponse += event.chunk;
+                set((state) => ({
+                  messages: state.messages.map((msg) =>
+                    msg.id === thinkingMessage.id
+                      ? { ...msg, content: fullResponse, isLoading: false }
+                      : msg
+                  ),
+                }));
+              } else if (event.type === 'end') {
+                if (event.messageId) messageId = event.messageId;
 
-          const realSessionId = response.session_id || selectedSessionId;
+                set((state) => ({
+                  messages: state.messages.map((msg) => {
+                    if (msg.id === thinkingMessage.id) {
+                      return {
+                        ...msg,
+                        id: messageId || msg.id,
+                        content: fullResponse,
+                        responseId: responseId,
+                      };
+                    }
+                    if (msg.id === userMessage.id && userMessageId) {
+                      return { ...msg, id: userMessageId };
+                    }
+                    return msg;
+                  }),
+                  sessions: (() => {
+                    const existing = state.sessions.find(
+                      (s) => s.sessionId === selectedSessionId || s.sessionId === realSessionId
+                    );
+                    if (!existing) {
+                      return [
+                        {
+                          sessionId: realSessionId,
+                          createdAt: new Date().toISOString(),
+                          title: query,
+                        },
+                        ...state.sessions,
+                      ];
+                    }
 
-          set((state) => ({
-            messages: state.messages.map((msg) => {
-              // Replace thinking message with actual assistant response
-              if (msg.id === thinkingMessage.id) return assistantMessage;
-              // Update user message with backend ID
-              if (msg.id === userMessage.id && response.userMessageId) {
-                return { ...msg, id: response.userMessageId };
+                    return state.sessions.map((s) => {
+                      if (s.sessionId === selectedSessionId || s.sessionId === realSessionId) {
+                        return {
+                          ...s,
+                          sessionId: realSessionId,
+                          title: s.title || query,
+                        };
+                      }
+                      return s;
+                    });
+                  })(),
+                  selectedSessionId: realSessionId,
+                  isSendingMessage: false,
+                }));
+
+                setTimeout(() => {
+                  get().refreshSession(realSessionId);
+                }, 3000);
+                
+                setTimeout(() => {
+                  get().refreshSession(realSessionId);
+                }, 10000);
               }
-              return msg;
-            }),
-            sessions: (() => {
-              const existing = state.sessions.find((s) => s.sessionId === selectedSessionId || s.sessionId === realSessionId);
-              if (!existing) {
-                return [
-                  {
-                    sessionId: realSessionId,
-                    createdAt: new Date().toISOString(),
-                    title: query,
-                  },
-                  ...state.sessions,
-                ];
-              }
-
-              return state.sessions.map((s) => {
-                if (s.sessionId === selectedSessionId || s.sessionId === realSessionId) {
-                  return {
-                    ...s,
-                    sessionId: realSessionId,
-                    title: s.title || query,
-                  };
-                }
-                return s;
-              });
-            })(),
-          }));
-
-          set((state) => ({
-            selectedSessionId: realSessionId,
-            isSendingMessage: false,
-          }));
+            }
+          );
           return;
         } catch (refreshErr) {
           set({ error: 'Session expired. Please log in again.' });
