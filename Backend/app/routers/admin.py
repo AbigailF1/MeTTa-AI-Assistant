@@ -60,7 +60,7 @@ async def get_admin_stats(
         total_users = await users_collection.count_documents({})
         
         # Get chunks statistics
-        chunks_collection = _get_collection(mongo_db, "chunks")
+        chunks_collection = _get_collection(mongo_db, "chunks_temp")
         total_chunks = await chunks_collection.count_documents({})
         
         # Get annotation statistics
@@ -100,7 +100,7 @@ async def get_annotation_stats(
     Get detailed annotation progress statistics
     """
     try:
-        chunks_collection = _get_collection(mongo_db, "chunks")
+        chunks_collection = _get_collection(mongo_db, "chunks_temp")
         
         # Only consider chunks from 'code' source for annotation stats
         annotatable_filter = {"source": "code"}
@@ -202,7 +202,7 @@ async def get_repositories(
     Get list of all ingested repositories with statistics
     """
     try:
-        collection = _get_collection(mongo_db, "chunks")
+        collection = _get_collection(mongo_db, "chunks_temp")
         
         pipeline = [
             {

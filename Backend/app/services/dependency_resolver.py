@@ -41,7 +41,7 @@ async def add_function_dependencies(
             {"functions": []}
         ]
     
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     
     total_chunks = await collection.count_documents(filter_query)
     logger.info(f"Found {total_chunks} chunks to process")
@@ -162,7 +162,7 @@ async def get_chunks_with_function_def(
     Returns:
         List of chunk documents that define the function
     """
-    collection = _get_collection(mongo_db, "chunks")
+    collection = _get_collection(mongo_db, "chunks_temp")
     
     query = {
         "source": "code",

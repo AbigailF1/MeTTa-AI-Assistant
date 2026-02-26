@@ -169,7 +169,7 @@ async def list_chunks_paginated(
     
     try:
         # Get total count first
-        collection = _get_collection(mongo_db, "chunks")
+        collection = _get_collection(mongo_db, "chunks_temp")
         total = await collection.count_documents(filter_query)
         logger.info(f"Total chunks found: {total}")
         
