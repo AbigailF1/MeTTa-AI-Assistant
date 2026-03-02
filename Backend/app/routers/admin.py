@@ -1,12 +1,30 @@
-from fastapi import APIRouter, HTTPException, status as http_status, Depends
+from fastapi import Query
+@router.delete("/repo-summary")
+async def delete_repo_summary(
+    repo_url: str = Query(..., description="Repository URL to delete summary for"),
+    branch: str = Query("main", description="Branch name (default: main)"),
+    mongo_db: Database = Depends(get_mongo_db),
+    _: None = Depends(require_role(UserRole.ADMIN)),
+):
+    collection = mongo_db.get_collection("repo_summaries")
+    result = await collection.delete_one({"repo_url": repo_url, "branch": branch})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Repo summary not found")
+    return {"message": "Repo summary deleted successfully"}
+
+from fastapi import APIRouter, HTTPException, status as http_status, Depends, Body
 from typing import Optional, List
 from pydantic import BaseModel
 from pymongo.database import Database
 from bson import ObjectId
-from app.core.logging import logger
 from datetime import datetime, timezone
 
-from app.dependencies import get_mongo_db, require_role
+from app.core.logging import logger
+from app.dependencies import get_mongo_db, require_role, get_llm_provider_dep
+from app.model.repo_summary_request import RepoSummaryRequest
+from app.model.repo_summary import RepoSummary
+from app.db.repo_summary_db import get_repo_summary, insert_repo_summary, ensure_repo_summaries_index
+from app.services.repo_summary_service import RepoSummaryGenerator
 from app.db.users import UserRole, get_users, delete_user
 from app.db.db import _get_collection
 
@@ -15,6 +33,43 @@ router = APIRouter(
     tags=["admin"],
     responses={404: {"description": "Not found"}},
 )
+
+@router.post("/repo-summary", response_model=RepoSummary)
+async def create_repo_summary(
+    request: RepoSummaryRequest = Body(...),
+    mongo_db: Database = Depends(get_mongo_db),
+    llm_client = Depends(get_llm_provider_dep),
+    _: None = Depends(require_role(UserRole.ADMIN)),
+):
+    await ensure_repo_summaries_index(mongo_db)
+    # Check if summary already exists
+    existing = await get_repo_summary(str(request.repo_url), request.branch, mongo_db)
+    if existing and not request.force_refresh:
+        return RepoSummary(**existing)
+
+    if existing and request.force_refresh:
+        collection = mongo_db.get_collection("repo_summaries")
+        await collection.delete_one({"repo_url": str(request.repo_url), "branch": request.branch})
+
+    # Generate summary using service and injected LLMClient
+    summary = await RepoSummaryGenerator.generate_repo_summary(
+        repo_url=str(request.repo_url),
+        branch=request.branch,
+        llm=llm_client,
+        prompt_suffix=request.prompt_suffix
+    )
+
+    summary_doc = {
+        "repo_url": str(request.repo_url),
+        "branch": request.branch,
+        "summary": summary,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+    }
+    await insert_repo_summary(summary_doc, mongo_db)
+    return RepoSummary(**summary_doc)
+
+
 
 class AdminStatsResponse(BaseModel):
     total_users: int
