@@ -1,4 +1,4 @@
-import aiohttp
+import httpx
 from typing import Optional, List
 from app.core.clients.llm_clients import LLMClient, LLMProvider
 from app.core.utils.llm_utils import LLMClientFactory
@@ -8,22 +8,22 @@ class RepoSummaryGenerator:
     async def fetch_github_tree(owner: str, repo: str, branch: str = "main") -> Optional[str]:
         api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
         headers = {"Accept": "application/vnd.github.v3+json"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    tree = data.get("tree", [])
-                    paths = [item["path"] for item in tree if item["type"] in ("tree", "blob")]
-                    
-                    def format_tree(paths):
-                        result = []
-                        for path in sorted(paths):
-                            indent = "  " * (path.count("/"))
-                            result.append(f"{indent}{path.split('/')[-1]}")
-                        return "\n".join(result)
-                    return format_tree(paths)
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                tree = data.get("tree", [])
+                paths = [item["path"] for item in tree if item["type"] in ("tree", "blob")]
+
+                def format_tree(paths):
+                    result = []
+                    for path in sorted(paths):
+                        indent = "  " * (path.count("/"))
+                        result.append(f"{indent}{path.split('/')[-1]}")
+                    return "\n".join(result)
+                return format_tree(paths)
         return None
-    
+
     @staticmethod
     async def fetch_readme_from_github(repo_url: str, branch: str = "main") -> Optional[str]:
         try:
@@ -34,10 +34,10 @@ class RepoSummaryGenerator:
         except Exception:
             return None
         readme_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(readme_url) as resp:
-                if resp.status == 200:
-                    return await resp.text()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(readme_url)
+            if resp.status_code == 200:
+                return resp.text
         return None
 
     @classmethod

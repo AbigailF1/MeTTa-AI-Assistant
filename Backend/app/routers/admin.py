@@ -1,18 +1,4 @@
-from fastapi import Query
-@router.delete("/repo-summary")
-async def delete_repo_summary(
-    repo_url: str = Query(..., description="Repository URL to delete summary for"),
-    branch: str = Query("main", description="Branch name (default: main)"),
-    mongo_db: Database = Depends(get_mongo_db),
-    _: None = Depends(require_role(UserRole.ADMIN)),
-):
-    collection = mongo_db.get_collection("repo_summaries")
-    result = await collection.delete_one({"repo_url": repo_url, "branch": branch})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Repo summary not found")
-    return {"message": "Repo summary deleted successfully"}
-
-from fastapi import APIRouter, HTTPException, status as http_status, Depends, Body
+from fastapi import APIRouter, HTTPException, status as http_status, Depends, Body, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from pymongo.database import Database
@@ -33,6 +19,19 @@ router = APIRouter(
     tags=["admin"],
     responses={404: {"description": "Not found"}},
 )
+
+@router.delete("/repo-summary")
+async def delete_repo_summary(
+    repo_url: str = Query(..., description="Repository URL to delete summary for"),
+    branch: str = Query("main", description="Branch name (default: main)"),
+    mongo_db: Database = Depends(get_mongo_db),
+    _: None = Depends(require_role(UserRole.ADMIN)),
+):
+    collection = mongo_db.get_collection("repo_summaries")
+    result = await collection.delete_one({"repo_url": repo_url, "branch": branch})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Repo summary not found")
+    return {"message": "Repo summary deleted successfully"}
 
 @router.post("/repo-summary", response_model=RepoSummary)
 async def create_repo_summary(
@@ -69,7 +68,23 @@ async def create_repo_summary(
     await insert_repo_summary(summary_doc, mongo_db)
     return RepoSummary(**summary_doc)
 
-
+@router.get("/repo-summary", response_model=RepoSummary)
+async def get_repo_summary_endpoint(
+    repo_url: str = Query(..., description="Repository URL to get summary for"),
+    branch: str = Query("main", description="Branch name (default: main)"),
+    mongo_db: Database = Depends(get_mongo_db),
+    _: None = Depends(require_role(UserRole.ADMIN)),
+):
+    summary = await get_repo_summary(repo_url, branch, mongo_db)
+    if not summary:
+        return RepoSummary(
+            repo_url=repo_url,
+            branch=branch,
+            summary="No summary available",
+            created_at=None,
+            updated_at=None,
+        )
+    return RepoSummary(**summary)
 
 class AdminStatsResponse(BaseModel):
     total_users: int
