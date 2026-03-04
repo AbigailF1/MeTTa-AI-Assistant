@@ -4,6 +4,17 @@ import { useAdminStore } from "../../store/useAdminStore";
 import { Button } from "../ui/button";
 import { ingestRepository, getBranches } from "../../services/adminService";
 import { toast } from "sonner";
+import Modal from "../ui/modal";
+import { Input } from "../ui/input";
+import Textarea from "../ui/textarea";
+import {
+  getRepoSummary,
+  createRepoSummary,
+  deleteRepoSummary,
+} from "../../services/adminService";
+
+const DEFAULT_PROMPT_SUFFIX =
+  "write a concise summary (2-4 sentences) of the repository's main purpose and functionality.";
 
 function RepositoryIngestion() {
   const { repositories, isLoadingRepositories, loadRepositories } =
@@ -13,6 +24,13 @@ function RepositoryIngestion() {
   const [isIngesting, setIsIngesting] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState("main");
+  const [summaryModalOpen, setSummaryModalOpen] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<any>(null);
+  const [summary, setSummary] = useState("");
+  const [promptSuffix, setPromptSuffix] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [hasSummary, setHasSummary] = useState(false);
 
   // Fetch branches when repoUrl changes
   const fetchBranches = useCallback(async (url: string) => {
@@ -63,7 +81,9 @@ function RepositoryIngestion() {
       const pollForStatus = async () => {
         await loadRepositories();
         const { repositories: currentRepos } = useAdminStore.getState();
-        const hasProcessing = currentRepos.some(repo => repo.status === "Processing");
+        const hasProcessing = currentRepos.some(
+          (repo) => repo.status === "Processing",
+        );
 
         if (!hasProcessing) {
           return true;
@@ -78,10 +98,12 @@ function RepositoryIngestion() {
       }, 3000);
 
       // Stop polling after 5 minutes to prevent infinite polling
-      setTimeout(() => {
-        clearInterval(interval);
-      }, 5 * 60 * 1000);
-
+      setTimeout(
+        () => {
+          clearInterval(interval);
+        },
+        5 * 60 * 1000,
+      );
     } catch (error: any) {
       console.error("Ingestion error:", error);
       const message =
@@ -89,6 +111,86 @@ function RepositoryIngestion() {
       toast.error(message);
     } finally {
       setIsIngesting(false);
+    }
+  };
+
+  const handleOpenSummaryModal = async (repo: any) => {
+    setSelectedRepo(repo);
+    setSummary("");
+    setPromptSuffix(DEFAULT_PROMPT_SUFFIX);
+    setSummaryModalOpen(true);
+    setHasSummary(false);
+    // Always default to main branch if available, else first branch, else repo.branch
+    try {
+      const branchList = await getBranches(repo.url);
+      setBranches(branchList);
+      let initialBranch = "main";
+      if (branchList.includes("main")) initialBranch = "main";
+      else if (branchList.length > 0) initialBranch = branchList[0];
+      else initialBranch = repo.branch || "main";
+      setSelectedBranch(initialBranch);
+      // Fetch summary for initial branch
+      fetchAndSetSummary(repo.url, initialBranch);
+    } catch {
+      setBranches([repo.branch || "main"]);
+      setSelectedBranch(repo.branch || "main");
+      fetchAndSetSummary(repo.url, repo.branch || "main");
+    }
+  };
+
+  // Fetch summary for a given repo url and branch
+  const fetchAndSetSummary = async (repoUrl: string, branch: string) => {
+    try {
+      const data = await getRepoSummary(repoUrl, branch);
+      if (data.summary && data.summary !== "No summary available") {
+        setSummary(data.summary);
+        setHasSummary(true);
+      } else {
+        setSummary("");
+        setHasSummary(false);
+      }
+    } catch {
+      setSummary("");
+      setHasSummary(false);
+    }
+  };
+
+  const handleRefreshSummary = async () => {
+    if (!selectedRepo) return;
+    setIsRefreshing(true);
+    try {
+      const data = await createRepoSummary({
+        repo_url: selectedRepo.url,
+        branch: selectedBranch,
+        force_refresh: true,
+        prompt_suffix: promptSuffix,
+      });
+      if (data.summary && data.summary !== "No summary available") {
+        setSummary(data.summary);
+        setHasSummary(true);
+      } else {
+        setSummary("");
+        setHasSummary(false);
+      }
+    } catch {
+      setSummary("");
+      setHasSummary(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleDeleteSummary = async () => {
+    if (!selectedRepo) return;
+    setIsDeleting(true);
+    try {
+      await deleteRepoSummary(selectedRepo.url, selectedBranch);
+      setSummary("Summary deleted");
+      setHasSummary(false);
+    } catch {
+      setSummary("Failed to delete summary");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -137,7 +239,7 @@ function RepositoryIngestion() {
                 // Auto-fetch branches when a valid GitHub URL is entered
                 if (
                   e.target.value.match(
-                    /^https:\/\/github\.com\/[^\/]+\/[^\/]+\/?$/
+                    /^https:\/\/github\.com\/[^\/]+\/[^\/]+\/?$/,
                   )
                 ) {
                   fetchBranches(e.target.value);
@@ -248,8 +350,7 @@ function RepositoryIngestion() {
                           {repo.url}
                         </p>
                         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                          Branch: {repo.branch} • Chunk size: {repo.chunkSize} •
-                          Chunks: {repo.chunks}
+                          Chunk size: {repo.chunkSize} • Chunks: {repo.chunks}
                         </p>
                       </div>
                     </div>
@@ -257,17 +358,25 @@ function RepositoryIngestion() {
                   <div className="flex items-center gap-3 ml-4">
                     <div className="text-right">
                       <span
-                        className={`inline-block px-2 py-1 rounded text-xs font-medium ${repo.status === "Completed"
+                        className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                          repo.status === "Completed"
                             ? "bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400"
                             : repo.status === "Processing"
                               ? "bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400"
                               : "bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400"
-                          }`}
+                        }`}
                       >
                         {repo.status}
                       </span>
                     </div>
                     {getStatusIcon(repo.status)}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleOpenSummaryModal(repo)}
+                    >
+                      Summary
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -275,6 +384,83 @@ function RepositoryIngestion() {
           )}
         </div>
       </div>
+      {/* Summary Modal */}
+      <Modal
+        isOpen={summaryModalOpen}
+        onClose={() => setSummaryModalOpen(false)}
+        title="Repository Summary"
+      >
+        <div className="p-6">
+          <h2 className="text-xl font-bold mb-2">Repository Summary</h2>
+          <p className="mb-2 text-sm text-zinc-500">
+            {selectedRepo ? `${selectedRepo.url}` : ""}
+          </p>
+          {branches.length > 0 && (
+            <div className="mb-2">
+              <label className="block text-sm font-medium mb-1">Branch</label>
+              <select
+                value={selectedBranch}
+                onChange={async (e) => {
+                  const branch = e.target.value;
+                  setSelectedBranch(branch);
+                  if (selectedRepo) {
+                    await fetchAndSetSummary(selectedRepo.url, branch);
+                  }
+                }}
+                className="w-full px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 rounded-lg text-sm"
+              >
+                {branches.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <Textarea className="w-full mb-2" rows={6} value={summary} readOnly />
+          <label className="block text-sm font-medium mb-1">
+            Custom Prompt
+          </label>
+          <Input
+            className="w-full mb-2"
+            value={promptSuffix}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setPromptSuffix(e.target.value)
+            }
+            placeholder="e.g. focus on architecture, be brief, etc."
+          />
+          <div className="flex flex-col items-center mt-6">
+            <div className="flex gap-4 justify-center w-full mt-2">
+              {!hasSummary ? (
+                <Button
+                  onClick={handleRefreshSummary}
+                  disabled={isRefreshing}
+                  className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
+                >
+                  {isRefreshing ? "Generating..." : "Generate"}
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleRefreshSummary}
+                  disabled={isRefreshing}
+                  className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
+                >
+                  {isRefreshing ? "Refreshing..." : "Regenerate"}
+                </Button>
+              )}
+              {hasSummary && (
+                <Button
+                  onClick={handleDeleteSummary}
+                  disabled={isDeleting}
+                  className="bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:text-white dark:hover:bg-red-700 border-none px-6 py-2 font-semibold shadow-sm"
+                >
+                  {isDeleting ? "Deleting..." : "Delete Summary"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

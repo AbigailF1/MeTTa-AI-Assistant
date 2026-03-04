@@ -149,3 +149,37 @@ export const getBranches = async (repoUrl: string): Promise<string[]> => {
 
   return response.data.branches;
 };
+
+// Repo Summary API
+export const getRepoSummary = async (repoUrl: string, branch: string = "main") => {
+  const response = await axiosInstance.get("/api/admin/repo-summary", {
+    params: { repo_url: repoUrl, branch },
+  });
+  return response.data;
+};
+
+export const createRepoSummary = async ({
+  repo_url,
+  branch,
+  force_refresh,
+  prompt_suffix,
+}: {
+  repo_url: string;
+  branch: string;
+  force_refresh?: boolean;
+  prompt_suffix?: string;
+}) => {
+  const response = await axiosInstance.post("/api/admin/repo-summary", {
+    repo_url,
+    branch,
+    force_refresh,
+    prompt_suffix,
+  });
+  return response.data;
+};
+
+export const deleteRepoSummary = async (repoUrl: string, branch: string = "main") => {
+  await axiosInstance.delete("/api/admin/repo-summary", {
+    params: { repo_url: repoUrl, branch },
+  });
+};
