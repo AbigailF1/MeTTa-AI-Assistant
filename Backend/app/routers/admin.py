@@ -76,13 +76,7 @@ async def get_repo_summary_endpoint(
 ):
     summary = await get_repo_summary(repo_url, branch, mongo_db)
     if not summary:
-        return RepoSummary(
-            repo_url=repo_url,
-            branch=branch,
-            summary="No summary available",
-            created_at=None,
-            updated_at=None,
-        )
+        raise HTTPException(status_code=404, detail="Summary not found")
     return RepoSummary(**summary)
 
 class AdminStatsResponse(BaseModel):

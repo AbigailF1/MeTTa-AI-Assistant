@@ -2,16 +2,18 @@ import { useEffect, useState, useCallback } from "react";
 import { Check, X, Loader2 } from "lucide-react";
 import { useAdminStore } from "../../store/useAdminStore";
 import { Button } from "../ui/button";
-import { ingestRepository, getBranches } from "../../services/adminService";
-import { toast } from "sonner";
-import Modal from "../ui/modal";
-import { Input } from "../ui/input";
-import Textarea from "../ui/textarea";
 import {
+  ingestRepository,
+  getBranches,
   getRepoSummary,
   createRepoSummary,
   deleteRepoSummary,
 } from "../../services/adminService";
+import { toast } from "sonner";
+import Modal from "../ui/modal";
+import { Input } from "../ui/input";
+import Textarea from "../ui/textarea";
+import { Repository } from "@/types/admin";
 
 const DEFAULT_PROMPT_SUFFIX =
   "write a concise summary (2-4 sentences) of the repository's main purpose and functionality.";
@@ -25,7 +27,7 @@ function RepositoryIngestion() {
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState("main");
   const [summaryModalOpen, setSummaryModalOpen] = useState(false);
-  const [selectedRepo, setSelectedRepo] = useState<any>(null);
+  const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
   const [summary, setSummary] = useState("");
   const [promptSuffix, setPromptSuffix] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -149,9 +151,14 @@ function RepositoryIngestion() {
         setSummary("");
         setHasSummary(false);
       }
-    } catch {
-      setSummary("");
-      setHasSummary(false);
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        setSummary("No summary available");
+        setHasSummary(false);
+      } else {
+        setSummary("");
+        setHasSummary(false);
+      }
     }
   };
 
@@ -390,74 +397,69 @@ function RepositoryIngestion() {
         onClose={() => setSummaryModalOpen(false)}
         title="Repository Summary"
       >
-        <div className="p-6">
-          <h2 className="text-xl font-bold mb-2">Repository Summary</h2>
-          <p className="mb-2 text-sm text-zinc-500">
-            {selectedRepo ? `${selectedRepo.url}` : ""}
-          </p>
-          {branches.length > 0 && (
-            <div className="mb-2">
-              <label className="block text-sm font-medium mb-1">Branch</label>
-              <select
-                value={selectedBranch}
-                onChange={async (e) => {
-                  const branch = e.target.value;
-                  setSelectedBranch(branch);
-                  if (selectedRepo) {
-                    await fetchAndSetSummary(selectedRepo.url, branch);
-                  }
-                }}
-                className="w-full px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 rounded-lg text-sm"
+        <p className="mb-2 text-sm text-zinc-500">
+          {selectedRepo ? `${selectedRepo.url}` : ""}
+        </p>
+        {branches.length > 0 && (
+          <div className="mb-2">
+            <label className="block text-sm font-medium mb-1">Branch</label>
+            <select
+              value={selectedBranch}
+              onChange={async (e) => {
+                const branch = e.target.value;
+                setSelectedBranch(branch);
+                if (selectedRepo) {
+                  await fetchAndSetSummary(selectedRepo.url, branch);
+                }
+              }}
+              className="w-full px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 rounded-lg text-sm"
+            >
+              {branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <Textarea className="w-full mb-2" rows={6} value={summary} readOnly />
+        <label className="block text-sm font-medium mb-1">Custom Prompt</label>
+        <Input
+          className="w-full mb-2"
+          value={promptSuffix}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setPromptSuffix(e.target.value)
+          }
+          placeholder="e.g. focus on architecture, be brief, etc."
+        />
+        <div className="flex flex-col items-center mt-6">
+          <div className="flex gap-4 justify-center w-full mt-2">
+            {!hasSummary ? (
+              <Button
+                onClick={handleRefreshSummary}
+                disabled={isRefreshing}
+                className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
               >
-                {branches.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <Textarea className="w-full mb-2" rows={6} value={summary} readOnly />
-          <label className="block text-sm font-medium mb-1">
-            Custom Prompt
-          </label>
-          <Input
-            className="w-full mb-2"
-            value={promptSuffix}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setPromptSuffix(e.target.value)
-            }
-            placeholder="e.g. focus on architecture, be brief, etc."
-          />
-          <div className="flex flex-col items-center mt-6">
-            <div className="flex gap-4 justify-center w-full mt-2">
-              {!hasSummary ? (
-                <Button
-                  onClick={handleRefreshSummary}
-                  disabled={isRefreshing}
-                  className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
-                >
-                  {isRefreshing ? "Generating..." : "Generate"}
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleRefreshSummary}
-                  disabled={isRefreshing}
-                  className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
-                >
-                  {isRefreshing ? "Refreshing..." : "Regenerate"}
-                </Button>
-              )}
-              {hasSummary && (
-                <Button
-                  onClick={handleDeleteSummary}
-                  disabled={isDeleting}
-                  className="bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:text-white dark:hover:bg-red-700 border-none px-6 py-2 font-semibold shadow-sm"
-                >
-                  {isDeleting ? "Deleting..." : "Delete Summary"}
-                </Button>
-              )}
-            </div>
+                {isRefreshing ? "Generating..." : "Generate"}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleRefreshSummary}
+                disabled={isRefreshing}
+                className="bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-white dark:hover:bg-zinc-600 border border-zinc-300 dark:border-zinc-600 px-6 py-2 font-semibold shadow-sm"
+              >
+                {isRefreshing ? "Refreshing..." : "Regenerate"}
+              </Button>
+            )}
+            {hasSummary && (
+              <Button
+                onClick={handleDeleteSummary}
+                disabled={isDeleting}
+                className="bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:text-white dark:hover:bg-red-700 border-none px-6 py-2 font-semibold shadow-sm"
+              >
+                {isDeleting ? "Deleting..." : "Delete Summary"}
+              </Button>
+            )}
           </div>
         </div>
       </Modal>
