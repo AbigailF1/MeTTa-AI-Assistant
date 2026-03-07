@@ -5,8 +5,23 @@ from app.core.utils.llm_utils import LLMClientFactory
 
 class RepoSummaryGenerator:
     @staticmethod
+    async def resolve_branch_to_sha(owner: str, repo: str, branch: str) -> Optional[str]:
+        """Resolve a branch or ref to its commit SHA using the GitHub API."""
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/branches/{branch}"
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("commit", {}).get("sha")
+        return None
+
+    @staticmethod
     async def fetch_github_tree(owner: str, repo: str, branch: str = "main") -> Optional[str]:
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+        sha = await RepoSummaryGenerator.resolve_branch_to_sha(owner, repo, branch)
+        if not sha:
+            return None
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{sha}?recursive=1"
         headers = {"Accept": "application/vnd.github.v3+json"}
         async with httpx.AsyncClient() as client:
             resp = await client.get(api_url, headers=headers)
@@ -33,7 +48,10 @@ class RepoSummaryGenerator:
             owner, repo = parts[-2], parts[-1]
         except Exception:
             return None
-        readme_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
+        sha = await RepoSummaryGenerator.resolve_branch_to_sha(owner, repo, branch)
+        if not sha:
+            return None
+        readme_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{sha}/README.md"
         async with httpx.AsyncClient() as client:
             resp = await client.get(readme_url)
             if resp.status_code == 200:
