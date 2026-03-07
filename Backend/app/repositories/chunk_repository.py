@@ -14,7 +14,7 @@ class ChunkRepository:
     Uses 'chunkId' as the unique key and 'description' as the description field name in the DB.
     """
 
-    def __init__(self, db: Database, collection_name: str = "chunks"):
+    def __init__(self, db: Database, collection_name: str = "chunks_temp"):
         self.collection = db.get_collection(collection_name)
 
     async def _ensure_indexes(self):

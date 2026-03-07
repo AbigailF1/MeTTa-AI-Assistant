@@ -65,7 +65,8 @@ async def ingest_repository(
 
 @router.get("/branches", summary="List all branches of a repository")
 async def list_branches_endpoint(
-    repo_url: str = Query(..., description="Git repository URL")
+    repo_url: str = Query(..., description="Git repository URL"),
+    _: None = Depends(require_role(UserRole.ADMIN)),
 ):
     try:
         branches = get_repo_branches(repo_url)
@@ -169,7 +170,7 @@ async def list_chunks_paginated(
     
     try:
         # Get total count first
-        collection = _get_collection(mongo_db, "chunks")
+        collection = _get_collection(mongo_db, "chunks_temp")
         total = await collection.count_documents(filter_query)
         logger.info(f"Total chunks found: {total}")
         
