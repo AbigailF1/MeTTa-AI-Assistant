@@ -24,8 +24,12 @@ function RepositoryIngestion() {
   const [repoUrl, setRepoUrl] = useState("");
   const [chunkSize, setChunkSize] = useState("1000");
   const [isIngesting, setIsIngesting] = useState(false);
+  // Ingestion form state
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState("main");
+  // Modal-specific state
+  const [modalBranches, setModalBranches] = useState<string[]>([]);
+  const [modalSelectedBranch, setModalSelectedBranch] = useState("main");
   const [summaryModalOpen, setSummaryModalOpen] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
   const [summary, setSummary] = useState("");
@@ -125,22 +129,22 @@ function RepositoryIngestion() {
     // Always default to main branch if available, else first branch, else repo.branch
     try {
       const branchList = await getBranches(repo.url);
-      setBranches(branchList);
+      setModalBranches(branchList);
       let initialBranch = "main";
       if (branchList.includes("main")) initialBranch = "main";
       else if (branchList.length > 0) initialBranch = branchList[0];
       else initialBranch = repo.branch || "main";
-      setSelectedBranch(initialBranch);
+      setModalSelectedBranch(initialBranch);
       // Fetch summary for initial branch
       fetchAndSetSummary(repo.url, initialBranch);
     } catch {
-      setBranches([repo.branch || "main"]);
-      setSelectedBranch(repo.branch || "main");
+      setModalBranches([repo.branch || "main"]);
+      setModalSelectedBranch(repo.branch || "main");
       fetchAndSetSummary(repo.url, repo.branch || "main");
     }
   };
 
-  // Fetch summary for a given repo url and branch
+  // Fetch summary for a given repo url and branch (used by modal)
   const fetchAndSetSummary = async (repoUrl: string, branch: string) => {
     try {
       const data = await getRepoSummary(repoUrl, branch);
@@ -168,7 +172,7 @@ function RepositoryIngestion() {
     try {
       const data = await createRepoSummary({
         repo_url: selectedRepo.url,
-        branch: selectedBranch,
+        branch: modalSelectedBranch,
         force_refresh: true,
         prompt_suffix: promptSuffix,
       });
@@ -191,7 +195,7 @@ function RepositoryIngestion() {
     if (!selectedRepo) return;
     setIsDeleting(true);
     try {
-      await deleteRepoSummary(selectedRepo.url, selectedBranch);
+      await deleteRepoSummary(selectedRepo.url, modalSelectedBranch);
       setSummary("Summary deleted");
       setHasSummary(false);
     } catch {
@@ -400,21 +404,21 @@ function RepositoryIngestion() {
         <p className="mb-2 text-sm text-zinc-500">
           {selectedRepo ? `${selectedRepo.url}` : ""}
         </p>
-        {branches.length > 0 && (
+        {modalBranches.length > 0 && (
           <div className="mb-2">
             <label className="block text-sm font-medium mb-1">Branch</label>
             <select
-              value={selectedBranch}
+              value={modalSelectedBranch}
               onChange={async (e) => {
                 const branch = e.target.value;
-                setSelectedBranch(branch);
+                setModalSelectedBranch(branch);
                 if (selectedRepo) {
                   await fetchAndSetSummary(selectedRepo.url, branch);
                 }
               }}
               className="w-full px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 rounded-lg text-sm"
             >
-              {branches.map((b) => (
+              {modalBranches.map((b) => (
                 <option key={b} value={b}>
                   {b}
                 </option>
