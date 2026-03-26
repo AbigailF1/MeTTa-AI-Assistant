@@ -20,7 +20,7 @@ function ChatHeader({ onToggleSidebar, onOpenSettings }: ChatHeaderProps) {
   
   function handleLogout() {
     logout()
-    navigate('/login')
+    navigate('/home')
   }
 
   useEffect(() => {
