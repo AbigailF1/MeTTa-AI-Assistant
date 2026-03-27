@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import { getAccessToken, getRefreshToken, refreshAccessToken, clearTokens } from './auth';
+import { getAccessToken, refreshAccessToken, clearTokens } from './auth';
 import { useUserStore } from '../store/useUserStore';
 
 // Create base axios instance
@@ -14,6 +14,9 @@ const axiosInstance: AxiosInstance = axios.create({
   },
   withCredentials: true,
 });
+
+// Prevent refresh storms when many requests fail with 401 simultaneously.
+let refreshPromise: Promise<unknown> | null = null;
 
 // Request interceptor for API calls
 axiosInstance.interceptors.request.use(
@@ -37,14 +40,24 @@ axiosInstance.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
+    if (!originalRequest) {
+      return Promise.reject(error);
+    }
+
+    const requestUrl = originalRequest?.url ?? '';
+    const isRefreshEndpoint = requestUrl.includes('/api/auth/refresh');
 
     // If the error is 401 and we haven't retried yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint) {
       originalRequest._retry = true;
 
       try {
-        // Try to refresh the token
-        await refreshAccessToken();
+        if (!refreshPromise) {
+          refreshPromise = refreshAccessToken().finally(() => {
+            refreshPromise = null;
+          });
+        }
+        await refreshPromise;
 
         // Update the authorization header
         const token = getAccessToken();
