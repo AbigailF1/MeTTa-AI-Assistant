@@ -1,5 +1,5 @@
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import { getAccessToken, refreshAccessToken, clearTokens } from './auth';
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
+import { getAccessToken, getRefreshToken, refreshAccessToken, clearTokens } from './auth';
 import { useUserStore } from '../store/useUserStore';
 
 // Create base axios instance
@@ -15,8 +15,23 @@ const axiosInstance: AxiosInstance = axios.create({
   withCredentials: true,
 });
 
-// Prevent refresh storms when many requests fail with 401 simultaneously.
-let refreshPromise: Promise<unknown> | null = null;
+const isAuthEndpoint = (url: string): boolean => {
+  return url.toLowerCase().includes('/api/auth/');
+};
+
+const hasAuthorizationHeader = (config: AxiosRequestConfig): boolean => {
+  const headers = config.headers;
+  if (!headers) {
+    return false;
+  }
+
+  if (typeof headers.get === 'function') {
+    return Boolean(headers.get('Authorization'));
+  }
+
+  const headerRecord = headers as Record<string, string | undefined>;
+  return Boolean(headerRecord.Authorization ?? headerRecord.authorization);
+};
 
 // Request interceptor for API calls
 axiosInstance.interceptors.request.use(
@@ -44,20 +59,20 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const requestUrl = originalRequest?.url ?? '';
-    const isRefreshEndpoint = requestUrl.includes('/api/auth/refresh');
+    const requestUrl = originalRequest.url ?? '';
+    const shouldAttemptRefresh =
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !isAuthEndpoint(requestUrl) &&
+      hasAuthorizationHeader(originalRequest) &&
+      Boolean(getRefreshToken());
 
-    // If the error is 401 and we haven't retried yet
-    if (error.response?.status === 401 && !originalRequest?._retry && !isRefreshEndpoint) {
+    // Only retry protected non-auth requests that still have a refresh path available.
+    if (shouldAttemptRefresh) {
       originalRequest._retry = true;
 
       try {
-        if (!refreshPromise) {
-          refreshPromise = refreshAccessToken().finally(() => {
-            refreshPromise = null;
-          });
-        }
-        await refreshPromise;
+        await refreshAccessToken();
 
         // Update the authorization header
         const token = getAccessToken();
