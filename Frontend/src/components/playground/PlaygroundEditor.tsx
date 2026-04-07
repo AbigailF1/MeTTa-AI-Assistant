@@ -23,11 +23,17 @@ interface PlaygroundEditorProps {
   value: string;
   onChange: (value: string) => void;
   theme: "light" | "dark";
+  className?: string;
 }
 
 const themeSlot = new Compartment();
 
-function PlaygroundEditor({ value, onChange, theme }: PlaygroundEditorProps) {
+function PlaygroundEditor({
+  value,
+  onChange,
+  theme,
+  className = "",
+}: PlaygroundEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -61,6 +67,17 @@ function PlaygroundEditor({ value, onChange, theme }: PlaygroundEditorProps) {
           indentWithTab,
         ]),
         themeSlot.of(editorThemes[theme]),
+        EditorView.theme({
+          "&": { height: "100%" },
+          ".cm-editor": { height: "100%" },
+          ".cm-scroller": {
+            overflow: "auto",
+            minHeight: "100%",
+          },
+          ".cm-content": {
+            minHeight: "100%",
+          },
+        }),
         updateListener,
       ],
     });
@@ -104,8 +121,10 @@ function PlaygroundEditor({ value, onChange, theme }: PlaygroundEditorProps) {
   }, [value]);
 
   return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950">
-      <div ref={containerRef} />
+    <div
+      className={`rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950 h-full min-h-0 ${className}`}
+    >
+      <div ref={containerRef} className="h-full min-h-0" />
     </div>
   );
 }
