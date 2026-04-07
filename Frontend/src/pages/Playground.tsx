@@ -4,7 +4,7 @@ import { useTheme } from "../hooks/useTheme";
 import PlaygroundEditor from "../components/playground/PlaygroundEditor";
 import PlaygroundOutput from "../components/playground/PlaygroundOutput";
 import PlaygroundToolbar from "../components/playground/PlaygroundToolbar";
-import { isAuthenticated } from "../lib/auth";
+// import { isAuthenticated } from "../lib/auth";
 
 const INITIAL_DOC = `; Try typing inside parentheses for MeTTa-aware suggestions
 (: parent (-> Symbol Symbol Atom))
@@ -24,17 +24,17 @@ function Playground() {
   const [isRunning, setIsRunning] = useState(false);
   const [requestId, setRequestId] = useState(0);
 
-  // Auth guard: redirect to /login if not authenticated
-  useEffect(() => {
-    if (!isAuthenticated() && location.pathname !== "/login") {
-      navigate("/login");
-    }
-  }, [location.pathname, navigate]);
+  // // Auth guard: redirect to /login if not authenticated
+  // useEffect(() => {
+  //   if (!isAuthenticated() && location.pathname !== "/login") {
+  //     navigate("/login");
+  //   }
+  // }, [location.pathname, navigate]);
 
-  // Don't render chat UI if not authenticated
-  if (!isAuthenticated()) {
-    return null;
-  }
+  // // Don't render chat UI if not authenticated
+  // if (!isAuthenticated()) {
+  //   return null;
+  // }
   
   useEffect(() => {
     const worker = new Worker(new URL("../workers/metta.worker.ts", import.meta.url), {
