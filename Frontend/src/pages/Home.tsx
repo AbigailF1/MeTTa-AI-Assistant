@@ -1,7 +1,4 @@
 import Hero from "../components/home/Hero"
-import FeatureGrid from "../components/home/FeatureGrid"
-import AboutMetta from "../components/home/AboutMetta"
-import AboutICog from "../components/home/AboutICog"
 import ThemeToggle from "../components/home/ThemeToggle"
 
 function Home() {
@@ -17,9 +14,6 @@ function Home() {
 
       <main className="relative">
         <Hero />
-        <FeatureGrid />
-        <AboutMetta />
-        <AboutICog />
 
         <section className="mx-auto max-w-7xl px-6 py-12">
           <div className="rounded-3xl border border-zinc-200 bg-zinc-900 px-8 py-10 text-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -27,22 +21,22 @@ function Home() {
               <div className="max-w-2xl">
                 <h2 className="text-2xl font-semibold tracking-tight">Start exploring MeTTa AI Assistant</h2>
                 <p className="mt-2 text-sm leading-7 text-zinc-300">
-                  Learn the foundations of MeTTa, explore symbolic reasoning ideas, and continue into the assistant workspace.
+                  Learn the foundations of MeTTa, explore symbolic reasoning ideas, continue into the assistant workspace, run and test your code.
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-3">
-                {/* <a
-                  href="/login"
-                  className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200"
-                >
-                  Go to Login
-                </a> */}
                 <a
                   href="/chat"
-                  className="rounded-xl border border-zinc-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-zinc-800"
+                  className="rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200"
                 >
                   Open Chat
+                </a>
+                <a
+                  href="/playground"
+                  className="rounded-xl border border-zinc-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-zinc-800"
+                >
+                  Open Playground
                 </a>
               </div>
             </div>
