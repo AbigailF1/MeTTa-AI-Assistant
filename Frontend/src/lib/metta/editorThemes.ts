@@ -3,31 +3,15 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
 const sharedSyntax = HighlightStyle.define([
-  // language forms
-  { tag: tags.keyword, color: "#f59e0b", fontWeight: "600" },
+  { tag: tags.keyword, color: "#60a5fa", fontWeight: "600" },
 
-  // stdlib functions / builtins
-  { tag: tags.propertyName, color: "#22d3ee", fontWeight: "600" },
-
-  // user-defined atoms
   { tag: tags.atom, color: "#f43f5e" },
-
-  // types
-  { tag: tags.typeName, color: "#60a5fa" },
-
-  // variables
   { tag: tags.variableName, color: "#e879f9" },
 
-  // literals
   { tag: tags.string, color: "#22c55e" },
   { tag: tags.number, color: "#38bdf8" },
-  { tag: tags.bool, color: "#2dd4bf" },
-  { tag: tags.null, color: "#2dd4bf" },
 
-  // comments
-  { tag: tags.comment, color: "#a16207", fontStyle: "italic" },
-
-  // operators / parens
+  { tag: tags.comment, color: "#f59e0b", fontStyle: "italic" },
   { tag: tags.operator, color: "#f59e0b" },
   { tag: tags.paren, color: "#d4d4d8" },
 ]);

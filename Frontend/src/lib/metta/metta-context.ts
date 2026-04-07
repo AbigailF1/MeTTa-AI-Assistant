@@ -1,13 +1,12 @@
-import {
-  snippetCompletion,
-  type Completion,
-  type CompletionContext,
-  type CompletionResult,
+import type {
+  Completion,
+  CompletionContext,
+  CompletionResult,
 } from "@codemirror/autocomplete";
 import {
-  getBuiltinCompletionOptions,
+  getBuiltinNames,
+  getKnownTypes,
   getBuiltinNameSet,
-  getTypeCompletionOptions,
 } from "./stdlib";
 
 type ListFrame = {
@@ -33,69 +32,39 @@ type SymbolCollections = {
   types: string[];
 };
 
-const ROOT_FORMS: Completion[] = [
-  snippetCompletion("!(${1:expr})", {
-    label: "!()",
-    type: "function",
-    detail: "Evaluate expression",
-  }),
-  snippetCompletion("(match &self ${1:(Rel $x)} ${2:$x})", {
-    label: "match",
-    type: "keyword",
-    detail: "Pattern match",
-  }),
-  snippetCompletion("(= (${1:name} ${2:$x}) ${3:body})", {
-    label: "= function",
-    type: "keyword",
-    detail: "Function or rule definition",
-  }),
-  snippetCompletion("(: ${1:name} ${2:Type})", {
-    label: ": type",
-    type: "keyword",
-    detail: "Type declaration",
-  }),
-  snippetCompletion("(if ${1:cond} ${2:then} ${3:else})", {
-    label: "if",
-    type: "keyword",
-    detail: "Conditional",
-  }),
-  snippetCompletion("(quote ${1:expr})", {
-    label: "quote",
-    type: "keyword",
-    detail: "Quote expression",
-  }),
-  { label: "match", type: "keyword" },
-  { label: "if", type: "keyword" },
-  { label: "quote", type: "keyword" },
-  { label: "let", type: "keyword" },
-  { label: "and", type: "keyword" },
-  { label: "or", type: "keyword" },
-  { label: "not", type: "keyword" },
-  { label: ":", type: "operator" },
-  { label: "=", type: "operator" },
+const ROOT_WORDS = [
+  "!",
+  "match",
+  "if",
+  "quote",
+  "let",
+  "and",
+  "or",
+  "not",
+  ":",
+  "=",
 ];
 
-const TYPE_OPTIONS = getTypeCompletionOptions();
-const COMMON_BUILTIN_OPTIONS = getBuiltinCompletionOptions({
-  commonOnly: true,
-  includeImported: false,
-  asSnippets: true,
-});
-const ALL_BUILTIN_OPTIONS = getBuiltinCompletionOptions({
-  commonOnly: false,
-  includeImported: false,
-  asSnippets: true,
-});
-const BUILTIN_NAME_SET = getBuiltinNameSet({
-  commonOnly: false,
-  includeImported: false,
-});
+const BUILTIN_NAME_SET = getBuiltinNameSet();
+const BUILTIN_OPTIONS: Completion[] = getBuiltinNames().map((label) => ({
+  label,
+  type: "keyword",
+}));
+
+const TYPE_OPTIONS: Completion[] = getKnownTypes().map((label) => ({
+  label,
+  type: "keyword",
+}));
+
+const ROOT_OPTIONS: Completion[] = ROOT_WORDS.map((label) => ({
+  label,
+  type: "keyword",
+}));
 
 function uniqOptions(list: Completion[]): Completion[] {
   const seen = new Set<string>();
-
   return list.filter((item) => {
-    const key = `${item.label}|${item.type || ""}`;
+    const key = item.label;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -106,7 +75,7 @@ function prefixInfo(doc: string, pos: number): { from: number; text: string } {
   let from = pos;
   while (from > 0) {
     const ch = doc[from - 1];
-    if (!/[A-Za-z0-9_!?+*\/\-:$&><=%]/.test(ch)) break;
+    if (!/[A-Za-z0-9_!?+*\/\-:$&><=%@]/.test(ch)) break;
     from--;
   }
   return { from, text: doc.slice(from, pos) };
@@ -205,16 +174,17 @@ function collectSymbols(doc: string): SymbolCollections {
   const spaces = new Set<string>(["&self"]);
   const atoms = new Set<string>();
   const heads = new Set<string>();
-  const types = new Set<string>(TYPE_OPTIONS.map((entry) => entry.label));
+  const types = new Set<string>(getKnownTypes());
 
-  const tokenRe = /\$[A-Za-z0-9_!?-]+|&[A-Za-z0-9_!?-]+|[A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*/g;
+  const tokenRe =
+    /\$[A-Za-z0-9_!?-]+|&[A-Za-z0-9_!?-]+|[A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*/g;
   for (const match of doc.matchAll(tokenRe)) {
     const token = match[0];
     if (token.startsWith("$")) {
       vars.add(token);
     } else if (token.startsWith("&")) {
       spaces.add(token);
-    } else if (!BUILTIN_NAME_SET.has(token)) {
+    } else if (!BUILTIN_NAME_SET.has(token) && !ROOT_WORDS.includes(token)) {
       atoms.add(token);
     }
   }
@@ -230,7 +200,8 @@ function collectSymbols(doc: string): SymbolCollections {
     heads.add(match[1]);
   }
 
-  const typeDeclRe = /\(:\s+([A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*)\s+([A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*)/g;
+  const typeDeclRe =
+    /\(:\s+([A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*)\s+([A-Za-z_+*\/:%<>=-][A-Za-z0-9_!?+*\/:%<>=-]*)/g;
   for (const match of doc.matchAll(typeDeclRe)) {
     atoms.add(match[1]);
     types.add(match[2]);
@@ -251,7 +222,9 @@ function currentScopeVars(listText: string): string[] {
 
 function filterOptions(prefix: string, options: Completion[]): Completion[] {
   const needle = prefix.toLowerCase();
-  return options.filter((option) => option.label.toLowerCase().startsWith(needle));
+  return options.filter((option) =>
+    option.label.toLowerCase().startsWith(needle)
+  );
 }
 
 function symbolOptions(values: string[], type = "variable"): Completion[] {
@@ -282,27 +255,19 @@ export function mettaCompletionSource(
     options = uniqOptions(symbolOptions(symbols.spaces, "namespace"));
   } else if (parse.expectHead) {
     options = uniqOptions([
-      ...ROOT_FORMS,
-      ...symbolOptions(symbols.heads, "function"),
-      ...COMMON_BUILTIN_OPTIONS,
+      ...ROOT_OPTIONS,
+      ...symbolOptions(symbols.heads, "keyword"),
+      ...BUILTIN_OPTIONS,
     ]);
   } else if (parse.parentHead === ":") {
     options = uniqOptions([
       ...TYPE_OPTIONS,
-      ...symbolOptions(symbols.types, "type"),
-    ]);
-  } else if (parse.parentHead === "match") {
-    options = uniqOptions([
-      ...symbolOptions(symbols.spaces, "namespace"),
-      ...symbolOptions(symbols.heads, "function"),
-      ...COMMON_BUILTIN_OPTIONS,
-      ...symbolOptions(scopeVars, "variable"),
-      ...symbolOptions(symbols.vars, "variable"),
+      ...symbolOptions(symbols.types, "keyword"),
     ]);
   } else {
     options = uniqOptions([
-      ...ALL_BUILTIN_OPTIONS,
-      ...symbolOptions(symbols.atoms, "variable"),
+      ...BUILTIN_OPTIONS,
+      ...symbolOptions(symbols.atoms, "text"),
       ...symbolOptions(scopeVars, "variable"),
       ...symbolOptions(symbols.vars, "variable"),
       ...symbolOptions(symbols.spaces, "namespace"),
@@ -322,6 +287,6 @@ export function mettaCompletionSource(
   return {
     from,
     options: filtered,
-    validFor: /^[A-Za-z0-9_!?+*\/\-:$&><=%]*$/,
+    validFor: /^[A-Za-z0-9_!?+*\/\-:$&><=%@]*$/,
   };
 }
