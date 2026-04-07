@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:full": "npm run wasm:build && vite",
+    "wasm:build": "cd metta-playground/metta-wasm && wasm-pack build --target web --out-dir ../pkg",
+    "build": "npm run wasm:build && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
