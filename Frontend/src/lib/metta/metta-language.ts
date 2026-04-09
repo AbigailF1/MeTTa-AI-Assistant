@@ -1,4 +1,4 @@
-import { StreamLanguage, LanguageSupport, StringStream } from "@codemirror/language";
+import { StreamLanguage, LanguageSupport } from "@codemirror/language";
 import { getBuiltinNameSet, getKnownTypes } from "./stdlib";
 
 const CORE_WORDS = new Set([
@@ -29,10 +29,13 @@ const DOC_WORDS = new Set([
 const BUILTIN_NAMES = getBuiltinNameSet();
 const TYPE_NAMES = new Set(getKnownTypes());
 
-function readWhile(stream: StringStream, re: RegExp) {
+function readWhile(
+  stream: { eol: () => boolean; peek: () => string | undefined; next: () => string | void },
+  re: RegExp
+) {
   while (!stream.eol()) {
-    const next = stream.peek();
-    if (next === undefined || !re.test(next)) break;
+    const peeked = stream.peek();
+    if (peeked === undefined || !re.test(peeked)) break;
     stream.next();
   }
 }
@@ -42,10 +45,22 @@ const mettaStream = StreamLanguage.define({
     return { inString: false, escaped: false };
   },
 
-  token(stream: StringStream, state: { inString: boolean; escaped: boolean }) {
+  token(
+    stream: {
+      eol: () => boolean;
+      peek: () => string | undefined;
+      next: () => string;
+      sol: () => boolean;
+      skipToEnd: () => void;
+      match: (pattern: RegExp | string) => boolean;
+      current: () => string;
+    },
+    state: { inString: boolean; escaped: boolean }
+  ) {
     if (state.inString) {
       while (!stream.eol()) {
         const ch = stream.next();
+        if (ch === undefined) break;
         if (state.escaped) {
           state.escaped = false;
         } else if (ch === "\\") {
@@ -58,12 +73,14 @@ const mettaStream = StreamLanguage.define({
       return "string";
     }
 
-    if (stream.sol() && stream.peek() === ";") {
+    const peeked = stream.peek();
+
+    if (stream.sol() && peeked === ";") {
       stream.skipToEnd();
       return "comment";
     }
 
-    if (stream.peek() === ";") {
+    if (peeked === ";") {
       stream.skipToEnd();
       return "comment";
     }
@@ -72,7 +89,12 @@ const mettaStream = StreamLanguage.define({
       return null;
     }
 
-    const ch = stream.peek();
+    const ch = peeked;
+
+    if (ch === undefined) {
+      stream.next();
+      return null;
+    }
 
     if (ch === "(" || ch === ")") {
       stream.next();

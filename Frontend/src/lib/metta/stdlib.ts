@@ -1,13 +1,8 @@
 import rawStdlib from "./metta-stdlib.json";
 
-type StdlibBuiltin = {
-  signatures: string[];
-  [key: string]: unknown;
-};
-
 type StdlibJson = {
   schemaVersion: number;
-  builtins: Record<string, StdlibBuiltin>;
+  builtins: Record<string, string[]>;
 };
 
 const stdlib = rawStdlib as StdlibJson;
@@ -31,14 +26,14 @@ export function getBuiltinNameSet(): Set<string> {
 }
 
 export function getBuiltinSignatures(name: string): string[] {
-  return stdlib.builtins[name]?.signatures ?? [];
+  return stdlib.builtins[name] ?? [];
 }
 
 export function getKnownTypes(): string[] {
   const types = new Set<string>();
 
-  for (const builtin of Object.values(stdlib.builtins)) {
-    for (const signature of builtin.signatures ?? []) {
+  for (const signatures of Object.values(stdlib.builtins)) {
+    for (const signature of signatures) {
       for (const token of extractTypeTokens(signature)) {
         types.add(token);
       }
