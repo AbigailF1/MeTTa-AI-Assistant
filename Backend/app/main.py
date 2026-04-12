@@ -28,7 +28,6 @@ from app.routers import (
     feedback,
     admin
 )
-from app.routers import learning
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.key_management_service import KMS
 from fastapi.middleware.cors import CORSMiddleware
@@ -161,7 +160,6 @@ app.include_router(feedback.router)
 app.include_router(key_management.router)
 app.include_router(chat_sessions.router)
 app.include_router(admin.router)
-app.include_router(learning.router)
 
 
 @app.middleware("http")
