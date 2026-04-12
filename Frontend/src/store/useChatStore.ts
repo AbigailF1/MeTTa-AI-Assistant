@@ -158,24 +158,14 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
   createLearningSession: async (userId: string, moduleId: string) => {
     set({ isLoadingMessages: true, error: null });
     try {
-      // Get and increment the learning session counter from localStorage
-      let learningSessionCount = 1;
-      try {
-        const stored = localStorage.getItem('learningSessionCount');
-        if (stored) {
-          learningSessionCount = parseInt(stored, 10) + 1;
-        }
-      } catch {}
-      localStorage.setItem('learningSessionCount', learningSessionCount.toString());
-
-      // 1. Create a new session in the backend with incrementing message
+      // Create a new session in the backend with a fixed message
       const response = await apiSendMessage({
-        query: `Start learning ${learningSessionCount}`,
+        query: "Start learning",
         isLearning: true,
         moduleId,
       });
 
-      // 2. Set selectedSessionId to the new session_id returned from backend
+      // Set selectedSessionId to the new session_id returned from backend
       if (response && response.session_id) {
         set({ selectedSessionId: response.session_id });
       } else {
@@ -183,11 +173,13 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
         return;
       }
 
-      // 3. Reload sessions from backend (for sidebar/session list)
+      // Reload sessions from backend (for sidebar/session list)
       await get().loadSessions();
 
       // 4. Fetch messages for the new session from backend (no static local messages)
       const { messages, nextCursor, hasNext } = await apiGetSessionMessagesCursor(response.session_id, 10);
+      // Fetch messages for the new session from backend
+      const messagesResp = await apiGetSessionMessages(response.session_id);
       set({
         messages: messages || [],
         isLoadingMessages: false,

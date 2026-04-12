@@ -167,29 +167,7 @@ class ChatService:
             moduleId=moduleId,
             mongo_db=self.mongo_db
         )
-
-        # Insert persistent assistant welcome message for new learning sessions
-        if isLearning:
-            welcome_message = (
-                "👋 Welcome to MeTTa Learning Mode!\n\n"
-                "I'm your friendly AI tutor, here to guide you through the world of MeTTa—an innovative, pattern-based language for cognitive architectures and symbolic reasoning.\n\n"
-                "In this interactive journey, you'll progress through a series of modules, each designed to build your understanding step by step. At any time, you can ask questions, request examples, or even jump to a specific module if you're feeling adventurous.\n\n"
-                "Here's how your learning experience will work:\n"
-                "- I'll introduce each module and explain key concepts in a clear, approachable way.\n"
-                "- You'll have opportunities to try exercises and quizzes to check your understanding.\n"
-                "- If you get stuck, just ask for help—I'm here to support you!\n"
-                "- You can always say things like 'jump to [module name]' to explore topics in your own order.\n\n"
-                "Let's get started! Which module would you like to begin with, or shall I recommend a starting point?"
-            )
-            await insert_chat_message(
-                {
-                    "sessionId": new_session_id,
-                    "role": "assistant",
-                    "content": welcome_message,
-                },
-                mongo_db=self.mongo_db,
-            )
-
+        # No automatic welcome message insertion here
         return new_session_id, True
 
     async def get_chat_history(
@@ -600,6 +578,85 @@ class ChatService:
                 mongo_db=self.mongo_db,
             )
 
+            # Check if this is the first message in the session
+            raw_history = await get_last_messages(
+                session_id=session_id,
+                limit=2,
+                mongo_db=self.mongo_db,
+            )
+            is_first_message = len(raw_history) == 1 and raw_history[0].get("role") == "user"
+
+            # Compose welcome + first lesson if first message
+            if is_first_message:
+                welcome_message = (
+                    "👋 Welcome to MeTTa Learning Mode!\n\n"
+                    "I'm your friendly AI tutor, here to guide you through the world of MeTTa—an innovative, pattern-based language for cognitive architectures and symbolic reasoning.\n\n"
+                    "In this interactive journey, you'll progress through a series of modules, each designed to build your understanding step by step. At any time, you can ask questions, request examples, or even jump to a specific module if you're feeling adventurous.\n\n"
+                    "Here's how your learning experience will work:\n"
+                    "- I'll introduce each module and explain key concepts in a clear, approachable way.\n"
+                    "- You'll have opportunities to try exercises and quizzes to check your understanding.\n"
+                    "- If you get stuck, just ask for help—I'm here to support you!\n"
+                    "- You can always say things like 'jump to [module name]' to explore topics in your own order.\n\n"
+                    "Let's get started! Which module would you like to begin with, or shall I recommend a starting point?"
+                )
+                # Compose pre-prompt for first lesson
+                pre_prompt = (
+                    "You are a warm, friendly, and expert AI tutor for the MeTTa language. "
+                    "After the introduction, guide the user through the curriculum step by step, adapting to their progress. "
+                    "Use the provided module content if available. Quiz the user, explain concepts, and adapt based on their answers. "
+                    "Do not reveal answers to quizzes unless the user is stuck."
+                )
+
+                # Load curriculum if available
+                import os, json
+                CURRICULUM_FILE = os.path.join(os.path.dirname(__file__), '../learning_curriculum.json')
+                with open(CURRICULUM_FILE, encoding='utf-8') as f:
+                    curriculum_data = json.load(f)
+                CURRICULUM = {}
+                for level in curriculum_data.get('levels', []):
+                    for module in level.get('modules', []):
+                        CURRICULUM[module['id']] = {
+                            **module,
+                            'level_id': level['id'],
+                            'level_title': level['title']
+                        }
+
+                module_content = None
+                module_title = None
+                if moduleId:
+                    module = CURRICULUM.get(moduleId)
+                    if module:
+                        module_title = module.get("title")
+                        module_content = module.get("content")
+
+                # Compose prompt for first lesson
+                prompt = welcome_message + "\n\n" + pre_prompt + "\n"
+                if module_title:
+                    prompt += f"Current module: {module_title}\n"
+                if module_content:
+                    prompt += f"Module content: {module_content}\n"
+                prompt += "\nRespond as the tutor."
+
+                # Call LLM
+                response = await self.default_llm_client.generate_text(prompt, temperature=0.7, max_tokens=600)
+
+                # Save assistant message
+                await insert_chat_message(
+                    {
+                        "sessionId": session_id,
+                        "role": "assistant",
+                        "content": response,
+                    },
+                    mongo_db=self.mongo_db,
+                )
+
+                return {
+                    "response": response,
+                    "module_id": moduleId,
+                    "session_id": session_id,
+                }
+
+            # Otherwise, continue as before (not first message)
             # Compose pre-prompt (copied from routers/learning.py)
             pre_prompt = (
                 "You are a warm, friendly, and expert AI tutor for the MeTTa language. "
