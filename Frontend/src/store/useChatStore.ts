@@ -178,13 +178,13 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
 
       // 4. Fetch messages for the new session from backend (no static local messages)
       const { messages, nextCursor, hasNext } = await apiGetSessionMessagesCursor(response.session_id, 10);
-      // Fetch messages for the new session from backend
-      const messagesResp = await apiGetSessionMessages(response.session_id);
+      // Fetch messages for the new session from backend (cursor-based)
+      const messagesResp = await apiGetSessionMessagesCursor(response.session_id, 10);
       set({
         messages: messages || [],
         isLoadingMessages: false,
-        messagesNextCursor: nextCursor || null,
-        hasNextMessages: !!hasNext,
+        messagesNextCursor: messagesResp.nextCursor || null,
+        hasNextMessages: !!messagesResp.hasNext,
       });
     } catch (err) {
       set({
@@ -567,36 +567,124 @@ const chatStoreCreator: StateCreator<ChatState> = (set, get) => ({
 
     // Unified chat/learning mode routing
     const session = sessions.find((s) => s.sessionId === selectedSessionId);
+    const isLearning = !!(session && session.isLearning);
+    const moduleId = session && session.isLearning ? session.moduleId : undefined;
+
+    if (isLearning) {
+      // Learning mode: always use non-streaming API
+      try {
+        const response = await apiSendMessage({
+          query,
+          session_id: selectedSessionId!,
+          isLearning,
+          moduleId,
+        });
+        set((state) => ({
+          messages: [
+            ...state.messages.filter((m) => !m.isLoading),
+            {
+              id: response.responseId || (Date.now() + 2).toString(),
+              role: 'assistant',
+              content: response.response,
+              timestamp: Date.now() + 2,
+            },
+          ],
+          isSendingMessage: false,
+        }));
+      } catch (err: any) {
+        set({
+          error: err?.response?.data?.detail || 'Chat error. Please try again.',
+          isSendingMessage: false,
+        });
+      }
+      return;
+    }
+
+    // Normal chat: streaming path
     try {
-      const isLearning = !!(session && session.isLearning);
-      const moduleId = session && session.isLearning ? session.moduleId : undefined;
-      const response = await apiSendMessage({
-        query,
-        session_id: selectedSessionId!,
-        isLearning,
-        moduleId,
-      });
-      // Append assistant response to messages
-      set((state) => ({
-        messages: [
-          ...state.messages.filter((m) => !m.isLoading),
-          {
-            id: response.responseId || (Date.now() + 2).toString(),
-            role: 'assistant',
-            content: response.response,
-            timestamp: Date.now() + 2,
-          },
-        ],
-        isSendingMessage: false,
-      }));
+      // If no sessionId, create a new session on-the-fly
+      let sessionId = selectedSessionId;
+      let createdSessionId: string | null = null;
+      let firstChunk = true;
+      let assistantMessageId = (Date.now() + 2).toString();
+      let assistantContent = '';
+
+      await apiStreamMessage(
+        {
+          query,
+          session_id: sessionId || undefined,
+        },
+        (event) => {
+          if (event.type === 'start') {
+            // Optionally handle start event
+          } else if (event.type === 'chunk') {
+            assistantContent += event.chunk || '';
+            if (firstChunk) {
+              // Remove thinking message and add assistant message
+              set((state) => ({
+                messages: [
+                  ...state.messages.filter((m) => !m.isLoading),
+                  {
+                    id: assistantMessageId,
+                    role: 'assistant',
+                    content: assistantContent,
+                    timestamp: Date.now() + 2,
+                    isLoading: true,
+                  },
+                ],
+              }));
+              firstChunk = false;
+            } else {
+              // Update assistant message content
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === assistantMessageId
+                    ? { ...m, content: assistantContent }
+                    : m
+                ),
+              }));
+            }
+          } else if (event.type === 'end') {
+            // Finalize assistant message
+            set((state) => ({
+              messages: state.messages.map((m) =>
+                m.id === assistantMessageId
+                  ? { ...m, content: assistantContent, isLoading: false }
+                  : m
+              ),
+              isSendingMessage: false,
+            }));
+          } else if (event.type === 'error') {
+            set({
+              error: event.error || 'Chat error. Please try again.',
+              isSendingMessage: false,
+            });
+          }
+          // Handle session_id returned from backend (for new sessions)
+          if (event.session_id && !sessionId) {
+            createdSessionId = event.session_id;
+            set({ selectedSessionId: event.session_id });
+            sessionId = event.session_id;
+            // Optionally reload sessions list
+            get().loadSessions();
+          }
+        }
+      );
+      // If a new session was created, reload sessions and messages
+      if (createdSessionId) {
+        await get().loadSessions();
+        // Optionally reload messages for the new session
+        // const messagesResp = await apiGetSessionMessages(createdSessionId);
+        // set({ messages: messagesResp });
+      }
+      set({ isSendingMessage: false });
     } catch (err: any) {
       set({
-        error: err?.response?.data?.detail || 'Chat error. Please try again.',
+        error: err?.response?.data?.detail || err?.message || 'Chat error. Please try again.',
         isSendingMessage: false,
       });
     }
     return;
-    // ...existing code for normal chat...
   },
 
   updateMessageFeedback: (messageId: string, feedback: 'positive' | 'neutral' | 'negative' | null) => {

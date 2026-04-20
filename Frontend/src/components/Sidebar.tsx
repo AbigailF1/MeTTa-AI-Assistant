@@ -351,6 +351,14 @@ function Sidebar({ isOpen, onClose }: SidebarProps) {
                 >
                   Cancel
                 </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() =>
+                    confirmDeleteId && handleDeleteSessionItem(confirmDeleteId)
+                  }
+                >
+                  Delete
+                </Button>
               </div>
             </div>
           </div>
