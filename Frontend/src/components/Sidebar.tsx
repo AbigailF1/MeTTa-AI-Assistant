@@ -1,6 +1,16 @@
 import { useState, useEffect } from "react";
-import { Plus, Search, ChevronLeft, Menu, MoreHorizontal } from "lucide-react";
+import {
+  Plus,
+  Search,
+  ChevronLeft,
+  Menu,
+  MoreHorizontal,
+  Home,
+  Code2,
+  ExternalLink,
+} from "lucide-react";
 import { useChatStore } from "../store/useChatStore";
+import { useNavigate } from "react-router-dom";
 import ThemeToggle from "./ui/ThemeToggle";
 import { SearchModal } from "./ui/SearchModal";
 import { Button } from "./ui/button";

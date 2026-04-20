@@ -1,9 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect } from "react";
-import Auth from "./pages/Auth";
-import Chat from "./pages/Chat";
-import Admin from "./pages/Admin";
-import NotFoundPage from "./pages/NotFound";
+// import Auth from "./pages/Auth";
+// import Chat from "./pages/Chat";
+// import Admin from "./pages/Admin";
+// import NotFoundPage from "./pages/NotFound";
 import LearningModePage from "./pages/LearningModePage";
 import { useEffect, lazy, Suspense } from "react";
 import { isAuthenticated } from "./lib/auth";
@@ -94,30 +93,24 @@ function PageLoader() {
 }
 
 function App() {
+  const authed = isAuthenticated();
   useEffect(() => {
-    isAuthenticated();
+    // Optionally, you can refresh authentication state here if needed
   }, []);
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route
-          path="/"
-          element={<Navigate to={authed ? "/chat" : "/login"} replace />}
-        />
-        <Route path="/login" element={<Auth />} />
-        <Route path="/chat" element={<Chat />} />
-        <Route path="/learning" element={<LearningModePage />} />
-        <Route path="/admin/*" element={<Admin />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/home" replace />} />
+          <Route
+            path="/"
+            element={<Navigate to={authed ? "/chat" : "/login"} replace />}
+          />
           <Route path="/home" element={<Home />} />
           <Route path="/login" element={<Auth />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/playground" element={<Playground />} />
+          <Route path="/learning" element={<LearningModePage />} />
           <Route path="/admin/*" element={<Admin />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

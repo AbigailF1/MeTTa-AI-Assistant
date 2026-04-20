@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getLearningStart } from "../services/learningModeService";
 import { useNavigate, useLocation } from "react-router-dom";
 import ChatHeader from "../components/chat/ChatHeader";
@@ -10,7 +10,7 @@ import { useChatStore } from "../store/useChatStore";
 import { isAuthenticated } from "../lib/auth";
 import { submitFeedback } from "../services/chatService";
 
-import { useRef } from "react";
+// import { useRef } from "react";
 
 interface ChatProps {
   learningMode?: boolean;
@@ -81,10 +81,9 @@ function Chat({ learningMode: propLearningMode = false }: ChatProps) {
           // Insert as a real assistant message and persist
           const welcomeMsg = {
             id: `learning-welcome-${Date.now()}`,
-            role: "assistant",
+            role: "assistant" as const,
             content: msg,
             timestamp: Date.now(),
-            extra: { learningMode: true },
           };
           useChatStore.setState((state) => {
             const newMessages = [...state.messages, welcomeMsg];
